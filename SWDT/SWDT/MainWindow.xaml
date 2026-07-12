@@ -840,6 +840,8 @@
                                         <ComboBoxItem Content="{DynamicResource Curve}" Tag="Curve" />
                                         <ComboBoxItem Content="{DynamicResource Straight}" Tag="Straight" />
                                         <ComboBoxItem Content="{DynamicResource Elbow}" Tag="Elbow" />
+                                        <ComboBoxItem Content="{DynamicResource AngleBracket}" Tag="AngleBracket" />
+                                        <ComboBoxItem Content="{DynamicResource SquareBracket}" Tag="SquareBracket" />
                                     </ComboBox>
 
                                     <TextBlock Text="{DynamicResource Arrow}" Foreground="{DynamicResource TextMutedBrush}" Margin="0,10,0,4" />
@@ -1081,6 +1083,8 @@
                                         <ComboBoxItem Content="{DynamicResource Curve}" Tag="Curve" />
                                         <ComboBoxItem Content="{DynamicResource Straight}" Tag="Straight" />
                                         <ComboBoxItem Content="{DynamicResource Elbow}" Tag="Elbow" />
+                                        <ComboBoxItem Content="{DynamicResource AngleBracket}" Tag="AngleBracket" />
+                                        <ComboBoxItem Content="{DynamicResource SquareBracket}" Tag="SquareBracket" />
                                     </ComboBox>
 
                                     <TextBlock Text="{DynamicResource Arrow}" Foreground="{DynamicResource TextMutedBrush}" Margin="0,10,0,4" />

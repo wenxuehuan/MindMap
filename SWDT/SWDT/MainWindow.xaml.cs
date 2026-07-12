@@ -4139,6 +4139,14 @@ public partial class MainWindow : Window
 
                 figure.Segments.Add(new LineSegment(end, true));
                 break;
+            case "AngleBracket":
+                AddBracketSegments(figure, start, end, useSquareCorners: false);
+                figure.Segments.Add(new LineSegment(end, true));
+                break;
+            case "SquareBracket":
+                AddBracketSegments(figure, start, end, useSquareCorners: true);
+                figure.Segments.Add(new LineSegment(end, true));
+                break;
             default:
                 double bend = GetConnectorBend(start, end);
                 if (Math.Abs(end.Y - start.Y) > Math.Abs(end.X - start.X))
@@ -4174,6 +4182,45 @@ public partial class MainWindow : Window
         }
 
         return new PathGeometry([figure]);
+    }
+
+    private static void AddBracketSegments(PathFigure figure, Point start, Point end, bool useSquareCorners)
+    {
+        double deltaX = end.X - start.X;
+        double deltaY = end.Y - start.Y;
+        if (Math.Abs(deltaX) >= Math.Abs(deltaY))
+        {
+            double direction = Math.Sign(deltaX);
+            double shoulder = Math.Min(Math.Abs(deltaX) * 0.28, 56);
+            Point firstShoulder = new(start.X + shoulder * direction, start.Y);
+            Point lastShoulder = new(end.X - shoulder * direction, end.Y);
+            figure.Segments.Add(new LineSegment(firstShoulder, true));
+
+            if (useSquareCorners)
+            {
+                double midX = (firstShoulder.X + lastShoulder.X) / 2;
+                figure.Segments.Add(new LineSegment(new Point(midX, start.Y), true));
+                figure.Segments.Add(new LineSegment(new Point(midX, end.Y), true));
+            }
+
+            figure.Segments.Add(new LineSegment(lastShoulder, true));
+            return;
+        }
+
+        double verticalDirection = Math.Sign(deltaY);
+        double verticalShoulder = Math.Min(Math.Abs(deltaY) * 0.28, 56);
+        Point firstVerticalShoulder = new(start.X, start.Y + verticalShoulder * verticalDirection);
+        Point lastVerticalShoulder = new(end.X, end.Y - verticalShoulder * verticalDirection);
+        figure.Segments.Add(new LineSegment(firstVerticalShoulder, true));
+
+        if (useSquareCorners)
+        {
+            double midY = (firstVerticalShoulder.Y + lastVerticalShoulder.Y) / 2;
+            figure.Segments.Add(new LineSegment(new Point(start.X, midY), true));
+            figure.Segments.Add(new LineSegment(new Point(end.X, midY), true));
+        }
+
+        figure.Segments.Add(new LineSegment(lastVerticalShoulder, true));
     }
 
     private static DoubleCollection GetConnectorDashArray(string dashStyle)
