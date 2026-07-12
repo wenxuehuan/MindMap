@@ -52,6 +52,8 @@ public sealed class MindMapNode
 
     public bool IsSummary { get; set; }
 
+    public bool IsCollapsed { get; set; }
+
     public List<Guid> SummarySourceIds { get; set; } = [];
 
     public List<MindMapNode> Children { get; set; } = [];

@@ -10,6 +10,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 using Microsoft.Win32;
 using IOPath = System.IO.Path;
 
@@ -21,8 +22,8 @@ public partial class MainWindow : Window
     private const double MaxNodeWidth = 280;
     private const double MinNodeHeight = 42;
     private const double HorizontalGap = 110;
-    private const double ParentChildGap = 150;
-    private const double VerticalGap = 34;
+    private const double ParentChildGap = 100;
+    private const double VerticalGap = 20;
     private const double NodeHorizontalPadding = 22;
     private const double NodeVerticalPadding = 18;
     private const double NodeFontSize = 14;
@@ -62,6 +63,7 @@ public partial class MainWindow : Window
     private bool _isUpdatingNodeProperties;
     private bool _isUpdatingColorPicker;
     private TextBox? _inlineTitleBox;
+    private Guid? _editingNodeId;
     private GridLength _previousRightSidebarWidth = new(300);
     private bool _isRightSidebarCollapsed;
     private bool _hasTextEditUndoSnapshot;
@@ -799,7 +801,7 @@ public partial class MainWindow : Window
         DrawSummaryConnections();
         DrawCustomConnections();
 
-        foreach (MindMapNode node in TraverseVisibleNodes())
+        foreach (MindMapNode node in TraverseDisplayedNodes())
         {
             DrawNode(node);
         }
@@ -900,6 +902,11 @@ public partial class MainWindow : Window
 
     private void DrawConnections(MindMapNode parent)
     {
+        if (parent.IsCollapsed)
+        {
+            return;
+        }
+
         Size parentSize = MeasureNodeSize(parent);
 
         foreach (MindMapNode child in parent.Children)
@@ -912,6 +919,11 @@ public partial class MainWindow : Window
 
             Size childSize = MeasureNodeSize(child);
             (Point start, Point end) = GetParentChildConnectionPoints(parent, parentSize, child, childSize);
+            if (parent.Children.Count > 0)
+            {
+                start = GetCollapseToggleCenter(parent, parentSize);
+            }
+
             Brush connectorBrush = CreateBrush(parent.ConnectorColor, Color.FromRgb(148, 163, 184));
 
             System.Windows.Shapes.Path connector = new()
@@ -931,7 +943,7 @@ public partial class MainWindow : Window
 
     private void DrawSummaryConnections()
     {
-        Dictionary<Guid, MindMapNode> nodeById = TraverseVisibleNodes().ToDictionary(node => node.Id);
+        Dictionary<Guid, MindMapNode> nodeById = TraverseDisplayedNodes().ToDictionary(node => node.Id);
 
         foreach (MindMapNode summaryNode in nodeById.Values.Where(node => node.IsSummary && node.SummarySourceIds.Count > 0))
         {
@@ -951,7 +963,10 @@ public partial class MainWindow : Window
     {
         Size sourceSize = MeasureNodeSize(sourceNode);
         Size summarySize = MeasureNodeSize(summaryNode);
-        (Point start, Point end) = GetNearestConnectionPoints(sourceNode, sourceSize, summaryNode, summarySize);
+        string direction = NormalizeLayoutDirection(GetVisibleRoot(sourceNode).LayoutDirection);
+        (Point start, Point end) = direction == "Radial"
+            ? GetNearestConnectionPoints(sourceNode, sourceSize, summaryNode, summarySize)
+            : GetDirectionalConnectionPoints(sourceNode, sourceSize, summaryNode, summarySize, direction);
         Brush connectorBrush = CreateBrush(summaryNode.ConnectorColor, Color.FromRgb(22, 163, 74));
 
         System.Windows.Shapes.Path connector = new()
@@ -969,7 +984,7 @@ public partial class MainWindow : Window
 
     private void DrawCustomConnections()
     {
-        Dictionary<Guid, MindMapNode> nodeById = TraverseVisibleNodes().ToDictionary(node => node.Id);
+        Dictionary<Guid, MindMapNode> nodeById = TraverseDisplayedNodes().ToDictionary(node => node.Id);
         foreach (MindMapConnection connection in CurrentDocument.Connections)
         {
             if (!nodeById.TryGetValue(connection.SourceNodeId, out MindMapNode? sourceNode) ||
@@ -1030,7 +1045,32 @@ public partial class MainWindow : Window
 
     private (Point Start, Point End) GetParentChildConnectionPoints(MindMapNode parent, Size parentSize, MindMapNode child, Size childSize)
     {
-        return GetNearestConnectionPoints(parent, parentSize, child, childSize);
+        MindMapNode root = GetVisibleRoot(parent);
+        int childIndex = GetLayoutChildren(parent).IndexOf(child);
+        string direction = GetEffectiveChildDirection(root, parent, Math.Max(0, childIndex));
+        return GetDirectionalConnectionPoints(parent, parentSize, child, childSize, direction);
+    }
+
+    private static (Point Start, Point End) GetDirectionalConnectionPoints(
+        MindMapNode source,
+        Size sourceSize,
+        MindMapNode target,
+        Size targetSize,
+        string direction)
+    {
+        Point sourceCenter = new(source.X + sourceSize.Width / 2, source.Y + sourceSize.Height / 2);
+        Point targetCenter = new(target.X + targetSize.Width / 2, target.Y + targetSize.Height / 2);
+        return direction switch
+        {
+            "Left" or "DownLeft" =>
+                (new Point(source.X, sourceCenter.Y), new Point(target.X + targetSize.Width, targetCenter.Y)),
+            "Down" =>
+                (new Point(sourceCenter.X, source.Y + sourceSize.Height), new Point(targetCenter.X, target.Y)),
+            "Up" =>
+                (new Point(sourceCenter.X, source.Y), new Point(targetCenter.X, target.Y + targetSize.Height)),
+            _ =>
+                (new Point(source.X + sourceSize.Width, sourceCenter.Y), new Point(target.X, targetCenter.Y))
+        };
     }
 
     private static (Point Start, Point End) GetNearestConnectionPoints(MindMapNode source, Size sourceSize, MindMapNode target, Size targetSize)
@@ -1057,7 +1097,7 @@ public partial class MainWindow : Window
         bool isSelected = node == _selectedNode;
         bool isMultiSelected = _selectedNodeIds.Contains(node.Id);
         Size nodeSize = MeasureNodeSize(node);
-        bool canInlineEdit = isSelected && _selectedNodeIds.Count <= 1;
+        bool canInlineEdit = isSelected && _selectedNodeIds.Count <= 1 && _editingNodeId == node.Id;
         FrameworkElement titleControl = canInlineEdit ? CreateInlineTitleBox(node, nodeSize) : CreateNodeTitleBlock(node, nodeSize);
         Border border = new()
         {
@@ -1076,8 +1116,96 @@ public partial class MainWindow : Window
 
         Canvas.SetLeft(border, node.X);
         Canvas.SetTop(border, node.Y);
+
+        if (node.Children.Count > 0)
+        {
+            DrawCollapseToggleTrunk(node, nodeSize);
+        }
+
         MindMapCanvas.Children.Add(border);
         _nodeControls[node.Id] = border;
+
+        if (node.Children.Count > 0)
+        {
+            DrawCollapseToggle(node, nodeSize);
+        }
+    }
+
+    private void DrawCollapseToggle(MindMapNode node, Size nodeSize)
+    {
+        const double toggleSize = 20;
+        Button toggle = new()
+        {
+            Content = node.IsCollapsed ? "+" : "−",
+            Tag = node.Id,
+            ToolTip = Localization.T(node.IsCollapsed ? "ExpandNode" : "CollapseNode")
+        };
+        toggle.SetResourceReference(FrameworkElement.StyleProperty, "NodeCollapseToggleButtonStyle");
+        toggle.Click += CollapseToggle_Click;
+
+        Point center = GetCollapseToggleCenter(node, nodeSize);
+        double left = center.X - toggleSize / 2;
+        double top = center.Y - toggleSize / 2;
+
+        Canvas.SetLeft(toggle, left);
+        Canvas.SetTop(toggle, top);
+        MindMapCanvas.Children.Add(toggle);
+    }
+
+    private Point GetCollapseToggleCenter(MindMapNode node, Size nodeSize)
+    {
+        const double toggleRadius = 10;
+        const double toggleGap = 8;
+        double offset = toggleGap + toggleRadius;
+        MindMapNode root = GetVisibleRoot(node);
+        string direction = NormalizeLayoutDirection(root.LayoutDirection);
+        return direction switch
+        {
+            "Left" or "DownLeft" => new Point(node.X - offset, node.Y + nodeSize.Height / 2),
+            "Down" => new Point(node.X + nodeSize.Width / 2, node.Y + nodeSize.Height + offset),
+            "Up" => new Point(node.X + nodeSize.Width / 2, node.Y - offset),
+            _ => new Point(node.X + nodeSize.Width + offset, node.Y + nodeSize.Height / 2)
+        };
+    }
+
+    private void DrawCollapseToggleTrunk(MindMapNode node, Size nodeSize)
+    {
+        Point toggleCenter = GetCollapseToggleCenter(node, nodeSize);
+        string direction = NormalizeLayoutDirection(GetVisibleRoot(node).LayoutDirection);
+        Point nodeAnchor = direction switch
+        {
+            "Left" or "DownLeft" => new Point(node.X, node.Y + nodeSize.Height / 2),
+            "Down" => new Point(node.X + nodeSize.Width / 2, node.Y + nodeSize.Height),
+            "Up" => new Point(node.X + nodeSize.Width / 2, node.Y),
+            _ => new Point(node.X + nodeSize.Width, node.Y + nodeSize.Height / 2)
+        };
+
+        System.Windows.Shapes.Path trunk = new()
+        {
+            Stroke = CreateBrush(node.ConnectorColor, Color.FromRgb(148, 163, 184)),
+            StrokeThickness = node.ConnectorThickness,
+            StrokeDashArray = GetConnectorDashArray(node.ConnectorDashStyle),
+            Data = new LineGeometry(nodeAnchor, toggleCenter),
+            IsHitTestVisible = false
+        };
+        MindMapCanvas.Children.Add(trunk);
+    }
+
+    private void CollapseToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: Guid nodeId } ||
+            TraverseVisibleNodes().FirstOrDefault(node => node.Id == nodeId) is not MindMapNode node)
+        {
+            return;
+        }
+
+        PushUndoSnapshot();
+        node.IsCollapsed = !node.IsCollapsed;
+        _editingNodeId = null;
+        MarkCurrentDocumentDirty();
+        AutoLayoutMap();
+        SelectNode(node);
+        e.Handled = true;
     }
 
     private static Brush GetNodeBackground(MindMapNode node, bool isSelected)
@@ -1167,7 +1295,6 @@ public partial class MainWindow : Window
             VerticalContentAlignment = VerticalAlignment.Center,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             TextAlignment = GetNodeTextAlignment(node),
-            MaxLength = 80,
             Tag = node.Id
         };
 
@@ -1222,14 +1349,14 @@ public partial class MainWindow : Window
         }
         else
         {
-            SelectNode(node, focusTitle: true);
+            SelectNode(node, focusTitle: e.ClickCount >= 2);
         }
 
-        _draggedNode = _selectedNodeIds.Contains(node.Id) ? node : null;
+        _draggedNode = IsVisibleRoot(node) ? node : null;
         _draggedNodes.Clear();
         if (_draggedNode is not null)
         {
-            _draggedNodes.AddRange(GetDragTargetNodes(_draggedNode));
+            _draggedNodes.AddRange(Traverse(_draggedNode));
         }
 
         _dragStart = GetWorldPosition(e);
@@ -1239,16 +1366,12 @@ public partial class MainWindow : Window
             CanvasViewport.CaptureMouse();
         }
 
-        if (e.ClickCount == 2)
-        {
-            FocusInlineEditor(selectAll: true);
-        }
-
         e.Handled = true;
     }
 
     private void ToggleNodeSelection(MindMapNode node)
     {
+        _editingNodeId = null;
         CurrentDocument.SelectedConnectionId = null;
         if (_selectedNodeIds.Contains(node.Id) && _selectedNodeIds.Count > 1)
         {
@@ -1263,20 +1386,6 @@ public partial class MainWindow : Window
 
         RenderCanvas();
         StatusText.Text = string.Format(CultureInfo.CurrentCulture, Localization.T("SelectedNodes"), _selectedNodeIds.Count);
-    }
-
-    private List<MindMapNode> GetDragTargetNodes(MindMapNode dragOrigin)
-    {
-        if (!_selectedNodeIds.Contains(dragOrigin.Id))
-        {
-            return [dragOrigin];
-        }
-
-        List<MindMapNode> targets = TraverseVisibleNodes()
-            .Where(node => _selectedNodeIds.Contains(node.Id))
-            .ToList();
-
-        return targets.Count == 0 ? [dragOrigin] : targets;
     }
 
     private void Connection_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -1336,6 +1445,20 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (Keyboard.Modifiers == ModifierKeys.None && e.Key == Key.Escape && _editingNodeId is not null)
+        {
+            MindMapNode? node = _selectedNode;
+            _editingNodeId = null;
+            _hasTextEditUndoSnapshot = false;
+            if (node is not null)
+            {
+                SelectNode(node);
+            }
+
+            e.Handled = true;
+            return;
+        }
+
         bool isEditingText = Keyboard.FocusedElement is TextBox;
         if (Keyboard.Modifiers == ModifierKeys.None && !isEditingText && (e.Key == Key.Delete || e.Key == Key.Back))
         {
@@ -1349,19 +1472,40 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (!isEditingText && e.Key == Key.F2)
+        {
+            SelectNode(_selectedNode, focusTitle: true);
+            e.Handled = true;
+            return;
+        }
+
+        if (!isEditingText && e.Key == Key.Space)
+        {
+            SelectNode(_selectedNode, focusTitle: true);
+            e.Handled = true;
+            return;
+        }
+
+        if (!isEditingText && e.Key is Key.Left or Key.Right or Key.Up or Key.Down)
+        {
+            MoveNodeSelection(e.Key);
+            e.Handled = true;
+            return;
+        }
+
         if (Keyboard.FocusedElement is TextBox && _isComposingText)
         {
             return;
         }
 
-        if (e.Key == Key.Enter)
+        if (!isEditingText && e.Key == Key.Enter)
         {
             AddSiblingNode(focusTitle: true);
             e.Handled = true;
             return;
         }
 
-        if (e.Key == Key.Tab)
+        if (!isEditingText && e.Key == Key.Tab)
         {
             if (_selectedNodeIds.Count >= 2)
             {
@@ -1373,6 +1517,61 @@ public partial class MainWindow : Window
             }
 
             e.Handled = true;
+        }
+    }
+
+    private void MoveNodeSelection(Key direction)
+    {
+        if (_selectedNode is null)
+        {
+            return;
+        }
+
+        Point origin = GetNodeCenter(_selectedNode);
+        MindMapNode? nearestNode = null;
+        double nearestScore = double.PositiveInfinity;
+
+        foreach (MindMapNode candidate in TraverseDisplayedNodes().Where(node => node.Id != _selectedNode.Id))
+        {
+            Point candidateCenter = GetNodeCenter(candidate);
+            double deltaX = candidateCenter.X - origin.X;
+            double deltaY = candidateCenter.Y - origin.Y;
+            double primaryDistance;
+            double perpendicularDistance;
+
+            switch (direction)
+            {
+                case Key.Left when deltaX < 0:
+                    primaryDistance = -deltaX;
+                    perpendicularDistance = Math.Abs(deltaY);
+                    break;
+                case Key.Right when deltaX > 0:
+                    primaryDistance = deltaX;
+                    perpendicularDistance = Math.Abs(deltaY);
+                    break;
+                case Key.Up when deltaY < 0:
+                    primaryDistance = -deltaY;
+                    perpendicularDistance = Math.Abs(deltaX);
+                    break;
+                case Key.Down when deltaY > 0:
+                    primaryDistance = deltaY;
+                    perpendicularDistance = Math.Abs(deltaX);
+                    break;
+                default:
+                    continue;
+            }
+
+            double score = primaryDistance + perpendicularDistance * 0.6;
+            if (score < nearestScore)
+            {
+                nearestScore = score;
+                nearestNode = candidate;
+            }
+        }
+
+        if (nearestNode is not null)
+        {
+            SelectNode(nearestNode);
         }
     }
 
@@ -1546,7 +1745,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        List<MindMapNode> hitNodes = TraverseVisibleNodes()
+        List<MindMapNode> hitNodes = TraverseDisplayedNodes()
             .Where(node => selectionBounds.IntersectsWith(new Rect(new Point(node.X, node.Y), MeasureNodeSize(node))))
             .ToList();
 
@@ -1578,7 +1777,7 @@ public partial class MainWindow : Window
         }
 
         _selectedNode = hitNodes.LastOrDefault(node => _selectedNodeIds.Contains(node.Id))
-            ?? TraverseVisibleNodes().FirstOrDefault(node => _selectedNodeIds.Contains(node.Id));
+            ?? TraverseDisplayedNodes().FirstOrDefault(node => _selectedNodeIds.Contains(node.Id));
 
         RenderCanvas();
         StatusText.Text = string.Format(CultureInfo.CurrentCulture, Localization.T("MarqueeSelected"), _selectedNodeIds.Count);
@@ -1660,6 +1859,7 @@ public partial class MainWindow : Window
         PushUndoSnapshot();
         _root.Children.Add(root);
         MarkCurrentDocumentDirty();
+        AutoLayoutMap();
         SelectNode(root, focusTitle);
     }
 
@@ -1683,8 +1883,10 @@ public partial class MainWindow : Window
         PositionNewChildNode(parent, child);
 
         PushUndoSnapshot();
+        parent.IsCollapsed = false;
         parent.Children.Add(child);
         MarkCurrentDocumentDirty();
+        AutoLayoutMap();
         SelectNode(child, focusTitle);
     }
 
@@ -1705,7 +1907,7 @@ public partial class MainWindow : Window
 
     private void AddConnectionBetweenSelectedNodes()
     {
-        List<MindMapNode> selectedNodes = TraverseVisibleNodes()
+        List<MindMapNode> selectedNodes = TraverseDisplayedNodes()
             .Where(node => _selectedNodeIds.Contains(node.Id))
             .ToList();
 
@@ -1735,7 +1937,7 @@ public partial class MainWindow : Window
 
     private void CompletePendingConnection(Guid sourceNodeId, MindMapNode target)
     {
-        MindMapNode? source = TraverseVisibleNodes().FirstOrDefault(node => node.Id == sourceNodeId);
+        MindMapNode? source = TraverseDisplayedNodes().FirstOrDefault(node => node.Id == sourceNodeId);
         _pendingConnectionSourceNodeId = null;
         if (source is null)
         {
@@ -1784,7 +1986,7 @@ public partial class MainWindow : Window
 
     private void AddSummaryNode()
     {
-        List<MindMapNode> selectedNodes = TraverseVisibleNodes()
+        List<MindMapNode> selectedNodes = TraverseDisplayedNodes()
             .Where(node => _selectedNodeIds.Contains(node.Id))
             .ToList();
 
@@ -1821,6 +2023,7 @@ public partial class MainWindow : Window
         PushUndoSnapshot();
         parent.Children.Add(summaryNode);
         MarkCurrentDocumentDirty();
+        AutoLayoutMap();
         SelectNode(summaryNode, focusTitle: true);
         StatusText.Text = string.Format(CultureInfo.CurrentCulture, Localization.T("SummaryAdded"), selectedNodes.Count);
     }
@@ -2051,6 +2254,7 @@ public partial class MainWindow : Window
         PushUndoSnapshot();
         parent.Children.Insert(selectedIndex + 1, sibling);
         MarkCurrentDocumentDirty();
+        AutoLayoutMap();
         SelectNode(sibling, focusTitle);
     }
 
@@ -2092,6 +2296,7 @@ public partial class MainWindow : Window
         CurrentDocument.Connections.RemoveAll(connection =>
             removedIds.Contains(connection.SourceNodeId) || removedIds.Contains(connection.TargetNodeId));
         MarkCurrentDocumentDirty();
+        AutoLayoutMap();
         MindMapNode? nextSelection = parent.IsCanvasRoot ? VisibleRoots.FirstOrDefault() : parent;
         if (nextSelection is not null)
         {
@@ -2230,7 +2435,7 @@ public partial class MainWindow : Window
 
     private void ExportImage_Click(object sender, RoutedEventArgs e)
     {
-        List<MindMapNode> nodes = TraverseVisibleNodes().ToList();
+        List<MindMapNode> nodes = TraverseDisplayedNodes().ToList();
         if (nodes.Count == 0)
         {
             MessageBox.Show(this, Localization.T("NoNodesToExport"), Localization.T("ExportImage"), MessageBoxButton.OK, MessageBoxImage.Information);
@@ -2305,10 +2510,35 @@ public partial class MainWindow : Window
             Filter = Localization.T("MindMapSaveFilter"),
             DefaultExt = "swdtmap",
             AddExtension = true,
-            FileName = document.FilePath is null ? $"{document.UntitledName}.swdtmap" : IOPath.GetFileName(document.FilePath)
+            FileName = document.FilePath is null
+                ? $"{GetDefaultDocumentFileName(document)}.swdtmap"
+                : IOPath.GetFileName(document.FilePath)
         };
 
         return dialog.ShowDialog(this) == true ? dialog.FileName : null;
+    }
+
+    private static string GetDefaultDocumentFileName(MindMapDocument document)
+    {
+        string title = GetFirstVisibleRoot(document.Root)?.Title ?? document.UntitledName;
+        HashSet<char> invalidCharacters = [.. IOPath.GetInvalidFileNameChars()];
+        string fileName = new string(title.Select(character => invalidCharacters.Contains(character) ? '_' : character).ToArray())
+            .Trim()
+            .TrimEnd('.', ' ');
+
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            fileName = document.UntitledName;
+        }
+
+        string nameWithoutExtension = IOPath.GetFileNameWithoutExtension(fileName);
+        string[] reservedNames = ["CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"];
+        if (reservedNames.Contains(nameWithoutExtension, StringComparer.OrdinalIgnoreCase))
+        {
+            fileName = $"_{fileName}";
+        }
+
+        return fileName.Length > 120 ? fileName[..120].TrimEnd('.', ' ') : fileName;
     }
 
     private ExportImageOptions? PromptForExportImageOptions(Rect bounds)
@@ -2368,7 +2598,7 @@ public partial class MainWindow : Window
         DrawExportSummaryConnections(exportCanvas, bounds);
         DrawExportCustomConnections(exportCanvas, bounds);
 
-        foreach (MindMapNode node in TraverseVisibleNodes())
+        foreach (MindMapNode node in TraverseDisplayedNodes())
         {
             DrawExportNode(exportCanvas, node, bounds);
         }
@@ -2432,6 +2662,11 @@ public partial class MainWindow : Window
 
     private void DrawExportConnections(Canvas targetCanvas, MindMapNode parent, Rect bounds)
     {
+        if (parent.IsCollapsed)
+        {
+            return;
+        }
+
         Size parentSize = MeasureNodeSize(parent);
 
         foreach (MindMapNode child in parent.Children)
@@ -2455,7 +2690,7 @@ public partial class MainWindow : Window
 
     private void DrawExportSummaryConnections(Canvas targetCanvas, Rect bounds)
     {
-        Dictionary<Guid, MindMapNode> nodeById = TraverseVisibleNodes().ToDictionary(node => node.Id);
+        Dictionary<Guid, MindMapNode> nodeById = TraverseDisplayedNodes().ToDictionary(node => node.Id);
 
         foreach (MindMapNode summaryNode in nodeById.Values.Where(node => node.IsSummary && node.SummarySourceIds.Count > 0))
         {
@@ -2468,7 +2703,10 @@ public partial class MainWindow : Window
 
                 Size sourceSize = MeasureNodeSize(sourceNode);
                 Size summarySize = MeasureNodeSize(summaryNode);
-                (Point start, Point end) = GetNearestConnectionPoints(sourceNode, sourceSize, summaryNode, summarySize);
+                string direction = NormalizeLayoutDirection(GetVisibleRoot(sourceNode).LayoutDirection);
+                (Point start, Point end) = direction == "Radial"
+                    ? GetNearestConnectionPoints(sourceNode, sourceSize, summaryNode, summarySize)
+                    : GetDirectionalConnectionPoints(sourceNode, sourceSize, summaryNode, summarySize, direction);
                 Point exportStart = TransformExportPoint(start, bounds);
                 Point exportEnd = TransformExportPoint(end, bounds);
                 Brush connectorBrush = CreateBrush(summaryNode.ConnectorColor, Color.FromRgb(22, 163, 74));
@@ -2480,7 +2718,7 @@ public partial class MainWindow : Window
 
     private void DrawExportCustomConnections(Canvas targetCanvas, Rect bounds)
     {
-        Dictionary<Guid, MindMapNode> nodeById = TraverseVisibleNodes().ToDictionary(node => node.Id);
+        Dictionary<Guid, MindMapNode> nodeById = TraverseDisplayedNodes().ToDictionary(node => node.Id);
         foreach (MindMapConnection connection in CurrentDocument.Connections)
         {
             if (!nodeById.TryGetValue(connection.SourceNodeId, out MindMapNode? sourceNode) ||
@@ -3308,7 +3546,7 @@ public partial class MainWindow : Window
 
     private void FitAllNodes_Click(object sender, RoutedEventArgs e)
     {
-        List<MindMapNode> nodes = TraverseVisibleNodes().ToList();
+        List<MindMapNode> nodes = TraverseDisplayedNodes().ToList();
         if (nodes.Count == 0)
         {
             return;
@@ -3386,6 +3624,7 @@ public partial class MainWindow : Window
     {
         _hasTextEditUndoSnapshot = false;
         _hasNodeDragUndoSnapshot = false;
+        _editingNodeId = focusTitle ? node.Id : null;
         CurrentDocument.SelectedConnectionId = null;
         _selectedNode = node;
         _selectedNodeIds.Clear();
@@ -3393,7 +3632,11 @@ public partial class MainWindow : Window
         RenderCanvas();
         if (focusTitle)
         {
-            FocusInlineEditor(selectAll: true);
+            QueueInlineEditorFocus(node.Id, selectAll: true);
+        }
+        else
+        {
+            QueueNodeSelectionFocus(node.Id);
         }
 
         StatusText.Text = string.Format(CultureInfo.CurrentCulture, Localization.T("SelectedNode"), node.Title);
@@ -3401,6 +3644,7 @@ public partial class MainWindow : Window
 
     private void SelectCanvas()
     {
+        _editingNodeId = null;
         _pendingConnectionSourceNodeId = null;
         _hasTextEditUndoSnapshot = false;
         _hasNodeDragUndoSnapshot = false;
@@ -3413,6 +3657,7 @@ public partial class MainWindow : Window
 
     private void SelectConnection(MindMapConnection connection)
     {
+        _editingNodeId = null;
         _pendingConnectionSourceNodeId = null;
         _hasTextEditUndoSnapshot = false;
         _hasNodeDragUndoSnapshot = false;
@@ -3458,7 +3703,7 @@ public partial class MainWindow : Window
         {
             Header = node.IsSummary ? string.Format(CultureInfo.CurrentCulture, Localization.T("SummarySuffix"), node.Title) : node.Title,
             Tag = node.Id,
-            IsExpanded = true
+            IsExpanded = !node.IsCollapsed
         };
         item.SetResourceReference(Control.ForegroundProperty, "TextPrimaryBrush");
         item.SetResourceReference(Control.BackgroundProperty, "PanelBackgroundBrush");
@@ -3537,6 +3782,11 @@ public partial class MainWindow : Window
     private void InlineTitleBox_LostFocus(object sender, RoutedEventArgs e)
     {
         _hasTextEditUndoSnapshot = false;
+        if (sender is TextBox { Tag: Guid nodeId } && _editingNodeId == nodeId)
+        {
+            _editingNodeId = null;
+        }
+
         RefreshCanvasAfterEdit();
     }
 
@@ -3644,6 +3894,34 @@ public partial class MainWindow : Window
         }
     }
 
+    private void QueueInlineEditorFocus(Guid nodeId, bool selectAll)
+    {
+        Dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
+        {
+            if (_selectedNode?.Id != nodeId ||
+                _inlineTitleBox?.Tag is not Guid editorNodeId ||
+                editorNodeId != nodeId)
+            {
+                return;
+            }
+
+            FocusInlineEditor(selectAll);
+            Keyboard.Focus(_inlineTitleBox);
+        });
+    }
+
+    private void QueueNodeSelectionFocus(Guid nodeId)
+    {
+        Dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
+        {
+            if (_selectedNode?.Id == nodeId && _editingNodeId is null)
+            {
+                CanvasViewport.Focus();
+                Keyboard.Focus(CanvasViewport);
+            }
+        });
+    }
+
     private static T? FindVisualAncestor<T>(DependencyObject? current)
         where T : DependencyObject
     {
@@ -3663,15 +3941,65 @@ public partial class MainWindow : Window
     private void AutoLayoutMap()
     {
         double nextTop = 110;
-        foreach (MindMapNode root in VisibleRoots)
+        foreach (MindMapNode root in VisibleRoots.Where(node => !node.IsSummary))
         {
             ArrangeVisibleRoot(root, new Point(110, nextTop));
-            Rect bounds = GetNodeBounds(Traverse(root).ToList());
+            List<MindMapNode> structuralNodes = TraverseDisplayed(root).Where(node => !node.IsSummary).ToList();
+            Rect bounds = GetNodeBounds(structuralNodes);
             double shiftX = 110 - bounds.Left;
             double shiftY = nextTop - bounds.Top;
             ShiftSubtree(root, shiftX, shiftY);
-            bounds.Offset(shiftX, shiftY);
+            bounds = GetNodeBounds(structuralNodes);
             nextTop = bounds.Bottom + Math.Max(90, root.VerticalGap * 2);
+        }
+
+        PositionSummaryNodes();
+    }
+
+    private static List<MindMapNode> GetLayoutChildren(MindMapNode node)
+    {
+        return node.IsCollapsed ? [] : node.Children.Where(child => !child.IsSummary).ToList();
+    }
+
+    private void PositionSummaryNodes()
+    {
+        Dictionary<Guid, MindMapNode> nodeById = TraverseDisplayedNodes().ToDictionary(node => node.Id);
+        foreach (MindMapNode summary in nodeById.Values.Where(node => node.IsSummary))
+        {
+            List<MindMapNode> sources = summary.SummarySourceIds
+                .Where(nodeById.ContainsKey)
+                .Select(id => nodeById[id])
+                .Where(node => !node.IsSummary)
+                .ToList();
+            if (sources.Count == 0)
+            {
+                continue;
+            }
+
+            Rect sourceBounds = GetNodeBounds(sources);
+            Size summarySize = MeasureNodeSize(summary);
+            MindMapNode root = GetVisibleRoot(sources[0]);
+            string direction = NormalizeLayoutDirection(root.LayoutDirection);
+            switch (direction)
+            {
+                case "Left":
+                case "DownLeft":
+                    summary.X = sourceBounds.Left - root.HorizontalGap - summarySize.Width;
+                    summary.Y = sourceBounds.Top + (sourceBounds.Height - summarySize.Height) / 2;
+                    break;
+                case "Down":
+                    summary.X = sourceBounds.Left + (sourceBounds.Width - summarySize.Width) / 2;
+                    summary.Y = sourceBounds.Bottom + root.VerticalGap;
+                    break;
+                case "Up":
+                    summary.X = sourceBounds.Left + (sourceBounds.Width - summarySize.Width) / 2;
+                    summary.Y = sourceBounds.Top - root.VerticalGap - summarySize.Height;
+                    break;
+                default:
+                    summary.X = sourceBounds.Right + root.HorizontalGap;
+                    summary.Y = sourceBounds.Top + (sourceBounds.Height - summarySize.Height) / 2;
+                    break;
+            }
         }
     }
 
@@ -3731,7 +4059,8 @@ public partial class MainWindow : Window
         node.X = x;
         double subtreeStart = nextY;
 
-        if (node.Children.Count == 0)
+        List<MindMapNode> layoutChildren = GetLayoutChildren(node);
+        if (layoutChildren.Count == 0)
         {
             node.Y = nextY;
             double leafBottom = node.Y + nodeSize.Height;
@@ -3742,7 +4071,7 @@ public partial class MainWindow : Window
         List<LayoutBounds> childBounds = [];
         double childX = x + nodeSize.Width + hGap;
 
-        foreach (MindMapNode child in node.Children)
+        foreach (MindMapNode child in layoutChildren)
         {
             childBounds.Add(ArrangeNodeRight(child, childX, ref nextY, hGap, vGap));
         }
@@ -3772,7 +4101,8 @@ public partial class MainWindow : Window
         node.X = rightEdge - nodeSize.Width;
         double subtreeStart = nextY;
 
-        if (node.Children.Count == 0)
+        List<MindMapNode> layoutChildren = GetLayoutChildren(node);
+        if (layoutChildren.Count == 0)
         {
             node.Y = nextY;
             double leafBottom = node.Y + nodeSize.Height;
@@ -3783,7 +4113,7 @@ public partial class MainWindow : Window
         List<LayoutBounds> childBounds = [];
         double childRightEdge = node.X - hGap;
 
-        foreach (MindMapNode child in node.Children)
+        foreach (MindMapNode child in layoutChildren)
         {
             childBounds.Add(ArrangeNodeLeft(child, childRightEdge, ref nextY, hGap, vGap));
         }
@@ -3813,7 +4143,8 @@ public partial class MainWindow : Window
         node.Y = y;
         double subtreeStart = nextX;
 
-        if (node.Children.Count == 0)
+        List<MindMapNode> layoutChildren = GetLayoutChildren(node);
+        if (layoutChildren.Count == 0)
         {
             node.X = nextX;
             double leafRight = node.X + nodeSize.Width;
@@ -3824,7 +4155,7 @@ public partial class MainWindow : Window
         List<LayoutBounds> childBounds = [];
         double childY = y + nodeSize.Height + vGap;
 
-        foreach (MindMapNode child in node.Children)
+        foreach (MindMapNode child in layoutChildren)
         {
             childBounds.Add(ArrangeNodeDown(child, childY, ref nextX, hGap, vGap));
         }
@@ -3854,7 +4185,8 @@ public partial class MainWindow : Window
         node.Y = bottomEdge - nodeSize.Height;
         double subtreeStart = nextX;
 
-        if (node.Children.Count == 0)
+        List<MindMapNode> layoutChildren = GetLayoutChildren(node);
+        if (layoutChildren.Count == 0)
         {
             node.X = nextX;
             double leafRight = node.X + nodeSize.Width;
@@ -3865,7 +4197,7 @@ public partial class MainWindow : Window
         List<LayoutBounds> childBounds = [];
         double childBottomEdge = node.Y - vGap;
 
-        foreach (MindMapNode child in node.Children)
+        foreach (MindMapNode child in layoutChildren)
         {
             childBounds.Add(ArrangeNodeUp(child, childBottomEdge, ref nextX, hGap, vGap));
         }
@@ -3898,7 +4230,7 @@ public partial class MainWindow : Window
 
         double childX = node.X + nodeSize.Width + hGap;
         double nextChildY = node.Y + nodeSize.Height + vGap;
-        foreach (MindMapNode child in node.Children)
+        foreach (MindMapNode child in GetLayoutChildren(node))
         {
             Rect childBounds = ArrangeNodeDownRight(child, childX, nextChildY, hGap, vGap);
             bounds.Union(childBounds);
@@ -3917,7 +4249,7 @@ public partial class MainWindow : Window
 
         double childRightEdge = node.X - hGap;
         double nextChildY = node.Y + nodeSize.Height + vGap;
-        foreach (MindMapNode child in node.Children)
+        foreach (MindMapNode child in GetLayoutChildren(node))
         {
             Rect childBounds = ArrangeNodeDownLeft(child, childRightEdge, nextChildY, hGap, vGap);
             bounds.Union(childBounds);
@@ -3931,10 +4263,11 @@ public partial class MainWindow : Window
     {
         root.X = origin.X;
         root.Y = origin.Y;
+        List<MindMapNode> layoutChildren = GetLayoutChildren(root);
         List<MindMapNode>[] groups = [[], [], [], []];
-        for (int index = 0; index < root.Children.Count; index++)
+        for (int index = 0; index < layoutChildren.Count; index++)
         {
-            groups[index % groups.Length].Add(root.Children[index]);
+            groups[index % groups.Length].Add(layoutChildren[index]);
         }
 
         ArrangeRadialGroup(root, groups[0], "Right", hGap, vGap);
@@ -3970,7 +4303,7 @@ public partial class MainWindow : Window
             }
         }
 
-        List<MindMapNode> nodes = children.SelectMany(Traverse).ToList();
+        List<MindMapNode> nodes = children.SelectMany(Traverse).Where(node => !node.IsSummary).ToList();
         Rect bounds = GetNodeBounds(nodes);
         Size rootSize = MeasureNodeSize(root);
         Point rootCenter = new(root.X + rootSize.Width / 2, root.Y + rootSize.Height / 2);
@@ -4972,9 +5305,9 @@ public partial class MainWindow : Window
 
     private void UpdateStats()
     {
-        int nodeCount = TraverseVisibleNodes().Count();
+        int nodeCount = TraverseDisplayedNodes().Count();
         int maxDepth = VisibleRoots.Count == 0 ? 0 : VisibleRoots.Max(GetMaxDepth);
-        int summaryCount = TraverseVisibleNodes().Count(node => node.IsSummary);
+        int summaryCount = TraverseDisplayedNodes().Count(node => node.IsSummary);
         ZoomText.Text = string.Format(CultureInfo.CurrentCulture, Localization.T("Zoom"), CanvasScale.ScaleX);
         string currentSelection = _selectedNode?.Title ?? Localization.T("SelectionCanvas");
         if (SelectedConnection is MindMapConnection selectedConnection)
@@ -4992,7 +5325,7 @@ public partial class MainWindow : Window
 
     private static int GetMaxDepth(MindMapNode node)
     {
-        if (node.Children.Count == 0)
+        if (node.IsCollapsed || node.Children.Count == 0)
         {
             return 1;
         }
@@ -5019,6 +5352,30 @@ public partial class MainWindow : Window
     private IEnumerable<MindMapNode> TraverseVisibleNodes()
     {
         return TraverseVisibleNodes(_root);
+    }
+
+    private IEnumerable<MindMapNode> TraverseDisplayedNodes()
+    {
+        return _root.IsCanvasRoot
+            ? _root.Children.SelectMany(TraverseDisplayed)
+            : TraverseDisplayed(_root);
+    }
+
+    private static IEnumerable<MindMapNode> TraverseDisplayed(MindMapNode node)
+    {
+        yield return node;
+        if (node.IsCollapsed)
+        {
+            yield break;
+        }
+
+        foreach (MindMapNode child in node.Children)
+        {
+            foreach (MindMapNode descendant in TraverseDisplayed(child))
+            {
+                yield return descendant;
+            }
+        }
     }
 
     private static IEnumerable<MindMapNode> TraverseVisibleNodes(MindMapNode root)

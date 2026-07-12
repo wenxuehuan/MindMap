@@ -14,7 +14,7 @@ public sealed class CanvasSettings
 
     public string LayoutDirection { get; set; } = "Right";
 
-    public double HorizontalGap { get; set; } = 150;
+    public double HorizontalGap { get; set; } = 100;
 
-    public double VerticalGap { get; set; } = 34;
+    public double VerticalGap { get; set; } = 20;
 }
