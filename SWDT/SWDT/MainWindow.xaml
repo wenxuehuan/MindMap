@@ -592,6 +592,13 @@
                     <MenuItem Header="{DynamicResource ResetView}" Click="ResetView_Click">
                         <MenuItem.Icon><TextBlock Style="{StaticResource MenuIconStyle}" Text="&#xE72C;" /></MenuItem.Icon>
                     </MenuItem>
+                    <MenuItem x:Name="ShowMiniMapMenuItem"
+                              Header="{DynamicResource ShowMiniMap}"
+                              IsCheckable="True"
+                              IsChecked="True"
+                              Click="ShowMiniMapMenuItem_Click">
+                        <MenuItem.Icon><TextBlock Style="{StaticResource MenuIconStyle}" Text="&#xE81E;" /></MenuItem.Icon>
+                    </MenuItem>
                     <Separator />
                     <MenuItem Header="{DynamicResource Theme}">
                         <MenuItem.Icon><TextBlock Style="{StaticResource MenuIconStyle}" Text="&#xE771;" /></MenuItem.Icon>
@@ -755,6 +762,49 @@
                                        StrokeDashArray="4,3"
                                        Fill="#332563EB" />
                         </Canvas>
+                        <Border x:Name="MiniMapBorder"
+                                Width="220"
+                                Height="140"
+                                Margin="12"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Top"
+                                Panel.ZIndex="20"
+                                Background="{DynamicResource ControlBackgroundBrush}"
+                                BorderBrush="{DynamicResource ControlBorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="6"
+                                Opacity="0.94"
+                                ClipToBounds="True"
+                                ToolTip="{DynamicResource MiniMap}"
+                                AutomationProperties.Name="{DynamicResource MiniMap}">
+                            <Grid>
+                                <Canvas x:Name="MiniMapCanvas"
+                                        Background="Transparent"
+                                        ClipToBounds="True"
+                                        PreviewMouseLeftButtonDown="MiniMap_MouseLeftButtonDown"
+                                        PreviewMouseLeftButtonUp="MiniMap_MouseLeftButtonUp"
+                                        PreviewMouseMove="MiniMap_MouseMove">
+                                    <Rectangle x:Name="MiniMapViewportRectangle"
+                                               Panel.ZIndex="10"
+                                               Stroke="{DynamicResource AccentBrush}"
+                                               StrokeThickness="1.5"
+                                               Fill="#26007ACC"
+                                               IsHitTestVisible="False" />
+                                </Canvas>
+                                <Button Width="22"
+                                        Height="20"
+                                        Margin="2"
+                                        Padding="0"
+                                        HorizontalAlignment="Right"
+                                        VerticalAlignment="Top"
+                                        Panel.ZIndex="30"
+                                        Content="×"
+                                        ToolTip="{DynamicResource HideMiniMap}"
+                                        AutomationProperties.Name="{DynamicResource HideMiniMap}"
+                                        Style="{StaticResource TabCloseButtonStyle}"
+                                        Click="HideMiniMapButton_Click" />
+                            </Grid>
+                        </Border>
                     </Grid>
                 </Border>
             </Grid>
@@ -814,6 +864,7 @@
 
                                     <TextBlock Text="{DynamicResource HorizontalGap}" Foreground="{DynamicResource TextMutedBrush}" Margin="0,10,0,4" />
                                     <ComboBox x:Name="HorizontalGapComboBox" SelectionChanged="RootLayoutSetting_Changed">
+                                        <ComboBoxItem Content="70 px" Tag="70" />
                                         <ComboBoxItem Content="90 px" Tag="90" />
                                         <ComboBoxItem Content="100 px" Tag="100" />
                                         <ComboBoxItem Content="120 px" Tag="120" />
@@ -824,6 +875,7 @@
 
                                     <TextBlock Text="{DynamicResource VerticalGap}" Foreground="{DynamicResource TextMutedBrush}" Margin="0,10,0,4" />
                                     <ComboBox x:Name="VerticalGapComboBox" SelectionChanged="RootLayoutSetting_Changed">
+                                        <ComboBoxItem Content="12 px" Tag="12" />
                                         <ComboBoxItem Content="20 px" Tag="20" />
                                         <ComboBoxItem Content="24 px" Tag="24" />
                                         <ComboBoxItem Content="34 px" Tag="34" />

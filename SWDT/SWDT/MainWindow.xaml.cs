@@ -22,8 +22,8 @@ public partial class MainWindow : Window
     private const double MaxNodeWidth = 280;
     private const double MinNodeHeight = 42;
     private const double HorizontalGap = 110;
-    private const double ParentChildGap = 100;
-    private const double VerticalGap = 20;
+    private const double ParentChildGap = 70;
+    private const double VerticalGap = 12;
     private const double NodeHorizontalPadding = 22;
     private const double NodeVerticalPadding = 18;
     private const double NodeFontSize = 14;
@@ -42,6 +42,7 @@ public partial class MainWindow : Window
     private static readonly string SettingsPath = IOPath.Combine(SettingsDirectory, "settings.json");
     private static AppSettings AppSettings = LoadAppSettings();
     private static int UntitledCounter;
+    private static bool IsMiniMapVisible = true;
 
     private readonly ObservableCollection<MindMapDocument> _documents = [];
     private readonly Dictionary<Guid, Border> _nodeControls = [];
@@ -74,6 +75,12 @@ public partial class MainWindow : Window
     private string? _activeColorProperty;
     private Color _pendingColor = Colors.Black;
     private Guid? _pendingConnectionSourceNodeId;
+    private Rect _miniMapWorldBounds = Rect.Empty;
+    private double _miniMapScale = 1;
+    private double _miniMapOffsetX;
+    private double _miniMapOffsetY;
+    private bool _isDraggingMiniMapViewport;
+    private Vector _miniMapDragOffset;
 
     private readonly record struct LayoutBounds(double Top, double Bottom);
 
@@ -138,6 +145,7 @@ public partial class MainWindow : Window
         Closed += MainWindow_Closed;
         AddNewDocument(selectTitle: false);
         UpdateRecentFilesMenu();
+        ApplyMiniMapVisibility();
     }
 
     public MainWindow(MindMapDocument document)
@@ -152,6 +160,7 @@ public partial class MainWindow : Window
         Closed += MainWindow_Closed;
         AddDocument(document);
         UpdateRecentFilesMenu();
+        ApplyMiniMapVisibility();
     }
 
     private static AppSettings LoadAppSettings()
@@ -262,6 +271,7 @@ public partial class MainWindow : Window
         {
             ApplyCanvasAppearance();
             UpdateTree();
+            UpdateMiniMapContent();
         }
     }
 
@@ -809,6 +819,7 @@ public partial class MainWindow : Window
         UpdateTree();
         UpdateInspector();
         UpdateStats();
+        UpdateMiniMapContent();
     }
 
     private void ApplyCanvasAppearance()
@@ -820,6 +831,7 @@ public partial class MainWindow : Window
         if (!settings.ShowGrid)
         {
             CanvasBackground.Fill = background;
+            UpdateMiniMapViewport();
             return;
         }
 
@@ -838,6 +850,8 @@ public partial class MainWindow : Window
             Viewport = new Rect(offsetX, offsetY, gridSize, gridSize),
             ViewportUnits = BrushMappingMode.Absolute
         };
+
+        UpdateMiniMapViewport();
     }
 
     private static double PositiveModulo(double value, double divisor)
@@ -849,6 +863,243 @@ public partial class MainWindow : Window
 
         double result = value % divisor;
         return result < 0 ? result + divisor : result;
+    }
+
+    private void UpdateMiniMapContent()
+    {
+        if (!IsMiniMapVisible || MiniMapBorder.Visibility != Visibility.Visible || MiniMapCanvas is null || MiniMapViewportRectangle is null)
+        {
+            return;
+        }
+
+        List<MindMapNode> nodes = TraverseDisplayedNodes().ToList();
+        MiniMapCanvas.Children.Clear();
+        if (nodes.Count == 0)
+        {
+            _miniMapWorldBounds = Rect.Empty;
+            MiniMapViewportRectangle.Visibility = Visibility.Collapsed;
+            MiniMapCanvas.Children.Add(MiniMapViewportRectangle);
+            return;
+        }
+
+        Rect bounds = GetNodeBounds(nodes);
+        double worldPadding = Math.Max(30, Math.Max(bounds.Width, bounds.Height) * 0.04);
+        bounds.Inflate(worldPadding, worldPadding);
+        _miniMapWorldBounds = bounds;
+
+        double mapWidth = MiniMapCanvas.ActualWidth > 1 ? MiniMapCanvas.ActualWidth : 218;
+        double mapHeight = MiniMapCanvas.ActualHeight > 1 ? MiniMapCanvas.ActualHeight : 138;
+        const double mapPadding = 8;
+        _miniMapScale = Math.Max(0.0001, Math.Min(
+            (mapWidth - mapPadding * 2) / Math.Max(1, bounds.Width),
+            (mapHeight - mapPadding * 2) / Math.Max(1, bounds.Height)));
+        _miniMapOffsetX = (mapWidth - bounds.Width * _miniMapScale) / 2 - bounds.Left * _miniMapScale;
+        _miniMapOffsetY = (mapHeight - bounds.Height * _miniMapScale) / 2 - bounds.Top * _miniMapScale;
+
+        Dictionary<Guid, MindMapNode> nodeById = nodes.ToDictionary(node => node.Id);
+        Brush accentBrush = TryFindResource("AccentBrush") as Brush ?? Brushes.DodgerBlue;
+
+        foreach (MindMapNode child in nodes.Where(node => !node.IsSummary && node.Parent is not null && nodeById.ContainsKey(node.Parent.Id)))
+        {
+            MindMapNode parent = child.Parent!;
+            (Point start, Point end) = GetParentChildConnectionPoints(parent, MeasureNodeSize(parent), child, MeasureNodeSize(child));
+            AddMiniMapLine(start, end, CreateBrush(parent.ConnectorColor, Color.FromRgb(148, 163, 184)), 1);
+        }
+
+        foreach (MindMapNode summary in nodes.Where(node => node.IsSummary))
+        {
+            foreach (Guid sourceId in summary.SummarySourceIds)
+            {
+                if (nodeById.TryGetValue(sourceId, out MindMapNode? source))
+                {
+                    AddMiniMapLine(GetNodeCenter(source), GetNodeCenter(summary), CreateBrush(summary.ConnectorColor, Color.FromRgb(22, 163, 74)), 1);
+                }
+            }
+        }
+
+        foreach (MindMapConnection connection in CurrentDocument.Connections)
+        {
+            if (nodeById.TryGetValue(connection.SourceNodeId, out MindMapNode? source) &&
+                nodeById.TryGetValue(connection.TargetNodeId, out MindMapNode? target))
+            {
+                AddMiniMapLine(GetNodeCenter(source), GetNodeCenter(target), CreateBrush(connection.Color, Color.FromRgb(37, 99, 235)), 1);
+            }
+        }
+
+        foreach (MindMapNode node in nodes)
+        {
+            Size size = MeasureNodeSize(node);
+            Point topLeft = WorldToMiniMap(new Point(node.X, node.Y));
+            Rectangle previewNode = new()
+            {
+                Width = Math.Max(3, size.Width * _miniMapScale),
+                Height = Math.Max(2, size.Height * _miniMapScale),
+                RadiusX = 1.5,
+                RadiusY = 1.5,
+                Fill = CreateBrush(node.FillColor, Colors.White),
+                Stroke = node == _selectedNode ? accentBrush : CreateBrush(node.BorderColor, Color.FromRgb(148, 163, 184)),
+                StrokeThickness = node == _selectedNode ? 1.5 : 0.75,
+                IsHitTestVisible = false
+            };
+            Canvas.SetLeft(previewNode, topLeft.X);
+            Canvas.SetTop(previewNode, topLeft.Y);
+            MiniMapCanvas.Children.Add(previewNode);
+        }
+
+        MiniMapViewportRectangle.Visibility = Visibility.Visible;
+        MiniMapCanvas.Children.Add(MiniMapViewportRectangle);
+        UpdateMiniMapViewport();
+    }
+
+    private void AddMiniMapLine(Point worldStart, Point worldEnd, Brush brush, double thickness)
+    {
+        Point start = WorldToMiniMap(worldStart);
+        Point end = WorldToMiniMap(worldEnd);
+        System.Windows.Shapes.Line line = new()
+        {
+            X1 = start.X,
+            Y1 = start.Y,
+            X2 = end.X,
+            Y2 = end.Y,
+            Stroke = brush,
+            StrokeThickness = thickness,
+            Opacity = 0.8,
+            IsHitTestVisible = false
+        };
+        MiniMapCanvas.Children.Add(line);
+    }
+
+    private Point WorldToMiniMap(Point point)
+    {
+        return new Point(point.X * _miniMapScale + _miniMapOffsetX, point.Y * _miniMapScale + _miniMapOffsetY);
+    }
+
+    private Point MiniMapToWorld(Point point)
+    {
+        double scale = Math.Max(0.0001, _miniMapScale);
+        return new Point((point.X - _miniMapOffsetX) / scale, (point.Y - _miniMapOffsetY) / scale);
+    }
+
+    private void UpdateMiniMapViewport()
+    {
+        if (!IsMiniMapVisible || MiniMapBorder.Visibility != Visibility.Visible || MiniMapViewportRectangle is null || _miniMapWorldBounds.IsEmpty || CanvasViewport.ActualWidth <= 0 || CanvasViewport.ActualHeight <= 0)
+        {
+            return;
+        }
+
+        double canvasScale = Math.Max(0.01, CanvasScale.ScaleX);
+        Rect visibleWorld = new(
+            -CanvasTranslate.X / canvasScale,
+            -CanvasTranslate.Y / canvasScale,
+            CanvasViewport.ActualWidth / canvasScale,
+            CanvasViewport.ActualHeight / canvasScale);
+        Point topLeft = WorldToMiniMap(visibleWorld.TopLeft);
+        MiniMapViewportRectangle.Width = Math.Max(2, visibleWorld.Width * _miniMapScale);
+        MiniMapViewportRectangle.Height = Math.Max(2, visibleWorld.Height * _miniMapScale);
+        Canvas.SetLeft(MiniMapViewportRectangle, topLeft.X);
+        Canvas.SetTop(MiniMapViewportRectangle, topLeft.Y);
+    }
+
+    private void MiniMap_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (_miniMapWorldBounds.IsEmpty)
+        {
+            return;
+        }
+
+        Point point = e.GetPosition(MiniMapCanvas);
+        Rect viewportRect = new(
+            Canvas.GetLeft(MiniMapViewportRectangle),
+            Canvas.GetTop(MiniMapViewportRectangle),
+            MiniMapViewportRectangle.Width,
+            MiniMapViewportRectangle.Height);
+        Point viewportCenter = new(viewportRect.Left + viewportRect.Width / 2, viewportRect.Top + viewportRect.Height / 2);
+        _miniMapDragOffset = viewportRect.Contains(point) ? point - viewportCenter : new Vector(0, 0);
+        _isDraggingMiniMapViewport = true;
+        MiniMapCanvas.CaptureMouse();
+
+        if (!viewportRect.Contains(point))
+        {
+            CenterMainViewportAtMiniMapPoint(point);
+        }
+
+        e.Handled = true;
+    }
+
+    private void MiniMap_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_isDraggingMiniMapViewport || e.LeftButton != MouseButtonState.Pressed)
+        {
+            return;
+        }
+
+        Point point = e.GetPosition(MiniMapCanvas) - _miniMapDragOffset;
+        CenterMainViewportAtMiniMapPoint(point);
+        e.Handled = true;
+    }
+
+    private void MiniMap_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_isDraggingMiniMapViewport)
+        {
+            _isDraggingMiniMapViewport = false;
+            MiniMapCanvas.ReleaseMouseCapture();
+            CaptureDocumentView();
+        }
+
+        e.Handled = true;
+    }
+
+    private void CenterMainViewportAtMiniMapPoint(Point miniMapPoint)
+    {
+        Point worldPoint = MiniMapToWorld(miniMapPoint);
+        double scale = Math.Max(0.01, CanvasScale.ScaleX);
+        CanvasTranslate.X = CanvasViewport.ActualWidth / 2 - worldPoint.X * scale;
+        CanvasTranslate.Y = CanvasViewport.ActualHeight / 2 - worldPoint.Y * scale;
+        ApplyCanvasAppearance();
+        CaptureDocumentView();
+    }
+
+    private void ShowMiniMapMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        SetMiniMapVisibility(ShowMiniMapMenuItem.IsChecked);
+    }
+
+    private void HideMiniMapButton_Click(object sender, RoutedEventArgs e)
+    {
+        SetMiniMapVisibility(false);
+        e.Handled = true;
+    }
+
+    private static void SetMiniMapVisibility(bool isVisible)
+    {
+        IsMiniMapVisible = isVisible;
+        foreach (MainWindow window in OpenWindows)
+        {
+            window.ApplyMiniMapVisibility();
+        }
+    }
+
+    private void ApplyMiniMapVisibility()
+    {
+        ShowMiniMapMenuItem.IsChecked = IsMiniMapVisible;
+        MiniMapBorder.Visibility = IsMiniMapVisible ? Visibility.Visible : Visibility.Collapsed;
+
+        if (!IsMiniMapVisible)
+        {
+            _isDraggingMiniMapViewport = false;
+            if (MiniMapCanvas.IsMouseCaptured)
+            {
+                MiniMapCanvas.ReleaseMouseCapture();
+            }
+
+            return;
+        }
+
+        if (_documents.Count > 0)
+        {
+            UpdateMiniMapContent();
+        }
     }
 
     private Point GetViewportPosition(MouseEventArgs e)
@@ -3838,6 +4089,7 @@ public partial class MainWindow : Window
         }
 
         UpdateStats();
+        UpdateMiniMapContent();
         StatusText.Text = string.Format(CultureInfo.CurrentCulture, Localization.T("SelectedNode"), _selectedNode.Title);
     }
 
