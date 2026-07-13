@@ -46,6 +46,7 @@ public partial class MainWindow : Window
 
     private readonly ObservableCollection<MindMapDocument> _documents = [];
     private readonly Dictionary<Guid, Border> _nodeControls = [];
+    private readonly Dictionary<Guid, Button> _collapseToggleControls = [];
     private readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
     private Point _tabDragStart;
     private MindMapDocument? _draggedDocument;
@@ -68,6 +69,9 @@ public partial class MainWindow : Window
     private GridLength _previousRightSidebarWidth = new(300);
     private bool _isRightSidebarCollapsed;
     private bool _hasTextEditUndoSnapshot;
+    private Guid? _textEditLayoutNodeId;
+    private Size _textEditLayoutBaseSize;
+    private readonly Dictionary<Guid, Point> _textEditLayoutBasePositions = [];
     private bool _hasNodeDragUndoSnapshot;
     private bool _isSelectingWithMarquee;
     private bool _isMarqueeCtrlMode;
@@ -570,6 +574,7 @@ public partial class MainWindow : Window
         document.CanvasOffsetY = entry.CanvasOffsetY;
         document.IsDirty = entry.IsDirty;
         _hasTextEditUndoSnapshot = false;
+        EndTextEditLayoutSession();
         _hasNodeDragUndoSnapshot = false;
         _isSelectingWithMarquee = false;
         SelectionRectangle.Visibility = Visibility.Collapsed;
@@ -801,6 +806,7 @@ public partial class MainWindow : Window
         ApplyCanvasAppearance();
         MindMapCanvas.Children.Clear();
         _nodeControls.Clear();
+        _collapseToggleControls.Clear();
         _inlineTitleBox = null;
 
         foreach (MindMapNode root in VisibleRoots)
@@ -1401,6 +1407,7 @@ public partial class MainWindow : Window
         Canvas.SetLeft(toggle, left);
         Canvas.SetTop(toggle, top);
         MindMapCanvas.Children.Add(toggle);
+        _collapseToggleControls[node.Id] = toggle;
     }
 
     private Point GetCollapseToggleCenter(MindMapNode node, Size nodeSize)
@@ -1439,7 +1446,7 @@ public partial class MainWindow : Window
             Data = new LineGeometry(nodeAnchor, toggleCenter),
             IsHitTestVisible = false
         };
-        MindMapCanvas.Children.Add(trunk);
+        MindMapCanvas.Children.Insert(0, trunk);
     }
 
     private void CollapseToggle_Click(object sender, RoutedEventArgs e)
@@ -1623,6 +1630,7 @@ public partial class MainWindow : Window
     private void ToggleNodeSelection(MindMapNode node)
     {
         _editingNodeId = null;
+        EndTextEditLayoutSession();
         CurrentDocument.SelectedConnectionId = null;
         if (_selectedNodeIds.Contains(node.Id) && _selectedNodeIds.Count > 1)
         {
@@ -1749,6 +1757,19 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (e.Key == Key.Enter &&
+            Keyboard.FocusedElement is TextBox { Tag: Guid editorNodeId } &&
+            _editingNodeId == editorNodeId &&
+            _selectedNode?.Id == editorNodeId)
+        {
+            MindMapNode node = _selectedNode;
+            _editingNodeId = null;
+            _hasTextEditUndoSnapshot = false;
+            SelectNode(node);
+            e.Handled = true;
+            return;
+        }
+
         if (!isEditingText && e.Key == Key.Enter)
         {
             AddSiblingNode(focusTitle: true);
@@ -1778,52 +1799,97 @@ public partial class MainWindow : Window
             return;
         }
 
-        Point origin = GetNodeCenter(_selectedNode);
-        MindMapNode? nearestNode = null;
-        double nearestScore = double.PositiveInfinity;
-
-        foreach (MindMapNode candidate in TraverseDisplayedNodes().Where(node => node.Id != _selectedNode.Id))
+        List<MindMapNode> displayedNodes = TraverseDisplayedNodes().ToList();
+        HashSet<Guid> displayedNodeIds = displayedNodes.Select(node => node.Id).ToHashSet();
+        MindMapNode? targetNode = direction switch
         {
-            Point candidateCenter = GetNodeCenter(candidate);
-            double deltaX = candidateCenter.X - origin.X;
-            double deltaY = candidateCenter.Y - origin.Y;
-            double primaryDistance;
-            double perpendicularDistance;
+            Key.Left or Key.Right => FindHorizontalNavigationNode(
+                _selectedNode,
+                direction,
+                displayedNodes,
+                displayedNodeIds),
+            Key.Up or Key.Down => FindSiblingNavigationNode(
+                _selectedNode,
+                direction,
+                displayedNodeIds),
+            _ => null
+        };
 
-            switch (direction)
+        if (targetNode is not null)
+        {
+            SelectNode(targetNode);
+        }
+    }
+
+    private MindMapNode? FindHorizontalNavigationNode(
+        MindMapNode selectedNode,
+        Key direction,
+        IReadOnlyList<MindMapNode> displayedNodes,
+        IReadOnlySet<Guid> displayedNodeIds)
+    {
+        IEnumerable<MindMapNode> relatedNodes;
+        if (selectedNode.IsSummary)
+        {
+            if (direction == Key.Right)
             {
-                case Key.Left when deltaX < 0:
-                    primaryDistance = -deltaX;
-                    perpendicularDistance = Math.Abs(deltaY);
-                    break;
-                case Key.Right when deltaX > 0:
-                    primaryDistance = deltaX;
-                    perpendicularDistance = Math.Abs(deltaY);
-                    break;
-                case Key.Up when deltaY < 0:
-                    primaryDistance = -deltaY;
-                    perpendicularDistance = Math.Abs(deltaX);
-                    break;
-                case Key.Down when deltaY > 0:
-                    primaryDistance = deltaY;
-                    perpendicularDistance = Math.Abs(deltaX);
-                    break;
-                default:
-                    continue;
+                return null;
             }
 
-            double score = primaryDistance + perpendicularDistance * 0.6;
-            if (score < nearestScore)
-            {
-                nearestScore = score;
-                nearestNode = candidate;
-            }
+            HashSet<Guid> sourceIds = selectedNode.SummarySourceIds.ToHashSet();
+            relatedNodes = displayedNodes.Where(node => sourceIds.Contains(node.Id));
+        }
+        else if (direction == Key.Left)
+        {
+            relatedNodes = selectedNode.Parent is not null &&
+                !selectedNode.Parent.IsCanvasRoot &&
+                displayedNodeIds.Contains(selectedNode.Parent.Id)
+                    ? [selectedNode.Parent]
+                    : [];
+        }
+        else
+        {
+            List<MindMapNode> candidates = selectedNode.Children
+                .Where(node => !node.IsSummary && displayedNodeIds.Contains(node.Id))
+                .ToList();
+
+            candidates.AddRange(displayedNodes.Where(node =>
+                node.IsSummary && node.SummarySourceIds.Contains(selectedNode.Id)));
+            relatedNodes = candidates;
         }
 
-        if (nearestNode is not null)
+        Point origin = GetNodeCenter(selectedNode);
+        return relatedNodes
+            .Where(candidate => candidate.Id != selectedNode.Id)
+            .Select(candidate => new
+            {
+                Node = candidate,
+                Center = GetNodeCenter(candidate)
+            })
+            .OrderBy(item => Math.Abs(item.Center.X - origin.X) + Math.Abs(item.Center.Y - origin.Y))
+            .Select(item => item.Node)
+            .FirstOrDefault();
+    }
+
+    private static MindMapNode? FindSiblingNavigationNode(
+        MindMapNode selectedNode,
+        Key direction,
+        IReadOnlySet<Guid> displayedNodeIds)
+    {
+        if (selectedNode.Parent is null)
         {
-            SelectNode(nearestNode);
+            return null;
         }
+
+        List<MindMapNode> siblings = selectedNode.Parent.Children
+            .Where(node =>
+                node.IsSummary == selectedNode.IsSummary &&
+                displayedNodeIds.Contains(node.Id))
+            .ToList();
+        int currentIndex = siblings.FindIndex(node => node.Id == selectedNode.Id);
+        int targetIndex = direction == Key.Up ? currentIndex - 1 : currentIndex + 1;
+        return currentIndex >= 0 && targetIndex >= 0 && targetIndex < siblings.Count
+            ? siblings[targetIndex]
+            : null;
     }
 
     private void MindMapCanvas_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -3874,6 +3940,7 @@ public partial class MainWindow : Window
     private void SelectNode(MindMapNode node, bool focusTitle = false)
     {
         _hasTextEditUndoSnapshot = false;
+        EndTextEditLayoutSession();
         _hasNodeDragUndoSnapshot = false;
         _editingNodeId = focusTitle ? node.Id : null;
         CurrentDocument.SelectedConnectionId = null;
@@ -3898,6 +3965,7 @@ public partial class MainWindow : Window
         _editingNodeId = null;
         _pendingConnectionSourceNodeId = null;
         _hasTextEditUndoSnapshot = false;
+        EndTextEditLayoutSession();
         _hasNodeDragUndoSnapshot = false;
         CurrentDocument.SelectedConnectionId = null;
         _selectedNode = null;
@@ -3911,6 +3979,7 @@ public partial class MainWindow : Window
         _editingNodeId = null;
         _pendingConnectionSourceNodeId = null;
         _hasTextEditUndoSnapshot = false;
+        EndTextEditLayoutSession();
         _hasNodeDragUndoSnapshot = false;
         CurrentDocument.SelectedConnectionId = connection.Id;
         _selectedNode = null;
@@ -4033,6 +4102,7 @@ public partial class MainWindow : Window
     private void InlineTitleBox_LostFocus(object sender, RoutedEventArgs e)
     {
         _hasTextEditUndoSnapshot = false;
+        EndTextEditLayoutSession();
         if (sender is TextBox { Tag: Guid nodeId } && _editingNodeId == nodeId)
         {
             _editingNodeId = null;
@@ -4059,9 +4129,9 @@ public partial class MainWindow : Window
         }
 
         string nextTitle = string.IsNullOrWhiteSpace(title) ? Localization.T("Untitled") : title.Trim();
-        bool titleChanged = _selectedNode.Title != nextTitle;
         if (_selectedNode.Title != nextTitle)
         {
+            BeginTextEditLayoutSession(_selectedNode);
             if (!_hasTextEditUndoSnapshot)
             {
                 PushUndoSnapshot();
@@ -4069,16 +4139,12 @@ public partial class MainWindow : Window
             }
 
             _selectedNode.Title = nextTitle;
+            RestoreTextEditLayoutBaseline();
+            ApplyNodeSizeChangeLayout(_selectedNode, _textEditLayoutBaseSize, MeasureNodeSize(_selectedNode));
             MarkCurrentDocumentDirty();
         }
 
-        if (titleChanged)
-        {
-            EnsureChildSubtreeHasHorizontalRoom(_selectedNode);
-        }
-
-        ResizeSelectedNodeControl();
-        RefreshConnections();
+        RefreshNodeLayoutVisuals();
         UpdateTreeItemHeader(_selectedNode);
 
         if (!ReferenceEquals(Keyboard.FocusedElement, NodeTitleBox))
@@ -4093,17 +4159,30 @@ public partial class MainWindow : Window
         StatusText.Text = string.Format(CultureInfo.CurrentCulture, Localization.T("SelectedNode"), _selectedNode.Title);
     }
 
-    private void ResizeSelectedNodeControl()
+    private void RefreshNodeLayoutVisuals()
     {
-        if (_selectedNode is null || !_nodeControls.TryGetValue(_selectedNode.Id, out Border? border))
+        foreach (MindMapNode node in TraverseDisplayedNodes())
         {
-            return;
+            Size size = MeasureNodeSize(node);
+            if (_nodeControls.TryGetValue(node.Id, out Border? border))
+            {
+                border.Width = size.Width;
+                border.Height = size.Height;
+                Canvas.SetLeft(border, node.X);
+                Canvas.SetTop(border, node.Y);
+                ApplyTitleControlWidth(border, size);
+            }
+
+            if (_collapseToggleControls.TryGetValue(node.Id, out Button? toggle))
+            {
+                const double toggleSize = 20;
+                Point center = GetCollapseToggleCenter(node, size);
+                Canvas.SetLeft(toggle, center.X - toggleSize / 2);
+                Canvas.SetTop(toggle, center.Y - toggleSize / 2);
+            }
         }
 
-        Size size = MeasureNodeSize(_selectedNode);
-        border.Width = size.Width;
-        border.Height = size.Height;
-        ApplyTitleControlWidth(border, size);
+        RefreshConnections();
     }
 
     private void RefreshConnections()
@@ -4125,6 +4204,11 @@ public partial class MainWindow : Window
 
         DrawSummaryConnections();
         DrawCustomConnections();
+
+        foreach (MindMapNode node in TraverseDisplayedNodes().Where(node => node.Children.Count > 0))
+        {
+            DrawCollapseToggleTrunk(node, MeasureNodeSize(node));
+        }
     }
 
     private void RefreshCanvasAfterEdit()
@@ -4609,9 +4693,207 @@ public partial class MainWindow : Window
         }
     }
 
-    private void EnsureChildSubtreeHasHorizontalRoom(MindMapNode parent)
+    private void BeginTextEditLayoutSession(MindMapNode node)
     {
-        UpdateRenderedSubtreePosition(parent);
+        if (_textEditLayoutNodeId == node.Id)
+        {
+            return;
+        }
+
+        _textEditLayoutNodeId = node.Id;
+        _textEditLayoutBaseSize = MeasureNodeSize(node);
+        _textEditLayoutBasePositions.Clear();
+        foreach (MindMapNode candidate in Traverse(CurrentDocument.Root))
+        {
+            _textEditLayoutBasePositions[candidate.Id] = new Point(candidate.X, candidate.Y);
+        }
+    }
+
+    private void RestoreTextEditLayoutBaseline()
+    {
+        foreach (MindMapNode node in Traverse(CurrentDocument.Root))
+        {
+            if (_textEditLayoutBasePositions.TryGetValue(node.Id, out Point position))
+            {
+                node.X = position.X;
+                node.Y = position.Y;
+            }
+        }
+    }
+
+    private void EndTextEditLayoutSession()
+    {
+        _textEditLayoutNodeId = null;
+        _textEditLayoutBasePositions.Clear();
+    }
+
+    private void ApplyNodeSizeChangeLayout(MindMapNode node, Size oldSize, Size newSize)
+    {
+        string direction = GetNodeLayoutDirection(node);
+        NodeLayoutOffset offset = NodeLayoutGeometry.GetAnchoredOffset(
+            direction,
+            new NodeLayoutSize(oldSize.Width, oldSize.Height),
+            new NodeLayoutSize(newSize.Width, newSize.Height));
+        ShiftSubtree(node, offset.X, offset.Y);
+
+        EnsureChildSubtreesOutsideNode(node, newSize);
+        ResolveEditedNodeSiblingCollisions(node, direction);
+    }
+
+    private string GetNodeLayoutDirection(MindMapNode node)
+    {
+        if (IsVisibleRoot(node) || node.Parent is null)
+        {
+            return "Root";
+        }
+
+        MindMapNode parent = node.Parent;
+        List<MindMapNode> siblings = GetLayoutChildren(parent);
+        int childIndex = siblings.IndexOf(node);
+        if (childIndex >= 0)
+        {
+            return GetEffectiveChildDirection(GetVisibleRoot(node), parent, childIndex);
+        }
+
+        Point parentCenter = GetNodeCenter(parent);
+        Point nodeCenter = GetNodeCenter(node);
+        double deltaX = nodeCenter.X - parentCenter.X;
+        double deltaY = nodeCenter.Y - parentCenter.Y;
+        if (Math.Abs(deltaX) >= Math.Abs(deltaY))
+        {
+            return deltaX < 0 ? "Left" : "Right";
+        }
+
+        return deltaY < 0 ? "Up" : "Down";
+    }
+
+    private void EnsureChildSubtreesOutsideNode(MindMapNode parent, Size parentSize)
+    {
+        List<MindMapNode> children = GetLayoutChildren(parent);
+        if (children.Count == 0)
+        {
+            return;
+        }
+
+        MindMapNode root = GetVisibleRoot(parent);
+        NodeLayoutRect parentRect = ToLayoutRect(parent, parentSize);
+        for (int index = 0; index < children.Count; index++)
+        {
+            MindMapNode child = children[index];
+            Size childSize = MeasureNodeSize(child);
+            NodeLayoutRect childRect = ToLayoutRect(child, childSize);
+            string direction = GetEffectiveChildDirection(root, parent, index);
+            double shiftX = 0;
+            double shiftY = 0;
+
+            switch (direction)
+            {
+                case "Left":
+                case "DownLeft":
+                    shiftX = Math.Min(0, parentRect.Left - root.HorizontalGap - childRect.Right);
+                    break;
+                case "Down":
+                    shiftY = Math.Max(0, parentRect.Bottom + root.VerticalGap - childRect.Top);
+                    break;
+                case "Up":
+                    shiftY = Math.Min(0, parentRect.Top - root.VerticalGap - childRect.Bottom);
+                    break;
+                default:
+                    shiftX = Math.Max(0, parentRect.Right + root.HorizontalGap - childRect.Left);
+                    break;
+            }
+
+            ShiftSubtree(child, shiftX, shiftY);
+        }
+    }
+
+    private void ResolveEditedNodeSiblingCollisions(MindMapNode node, string direction)
+    {
+        if (node.Parent is not MindMapNode parent || direction == "Root")
+        {
+            return;
+        }
+
+        MindMapNode root = GetVisibleRoot(node);
+        List<MindMapNode> layoutChildren = GetLayoutChildren(parent);
+        List<MindMapNode> siblings = layoutChildren
+            .Where((candidate, index) =>
+                GetEffectiveChildDirection(root, parent, index) == direction)
+            .OrderBy(candidate => GetSiblingAxisCenter(candidate, direction))
+            .ToList();
+        int editedIndex = siblings.IndexOf(node);
+        if (editedIndex < 0)
+        {
+            return;
+        }
+
+        NodeLayoutAxis axis = direction is "Down" or "Up"
+            ? NodeLayoutAxis.Horizontal
+            : NodeLayoutAxis.Vertical;
+        double gap = axis == NodeLayoutAxis.Horizontal ? root.HorizontalGap : root.VerticalGap;
+
+        NodeLayoutRect fixedRect = GetDisplayedSubtreeLayoutRect(node);
+        for (int index = editedIndex - 1; index >= 0; index--)
+        {
+            MindMapNode sibling = siblings[index];
+            NodeLayoutRect movingRect = GetDisplayedSubtreeLayoutRect(sibling);
+            double separation = NodeLayoutGeometry.GetBackwardSeparation(fixedRect, movingRect, gap, axis);
+            ShiftSubtreeAlongAxis(sibling, separation, axis);
+            fixedRect = OffsetLayoutRect(movingRect, separation, axis);
+        }
+
+        fixedRect = GetDisplayedSubtreeLayoutRect(node);
+        for (int index = editedIndex + 1; index < siblings.Count; index++)
+        {
+            MindMapNode sibling = siblings[index];
+            NodeLayoutRect movingRect = GetDisplayedSubtreeLayoutRect(sibling);
+            double separation = NodeLayoutGeometry.GetForwardSeparation(fixedRect, movingRect, gap, axis);
+            ShiftSubtreeAlongAxis(sibling, separation, axis);
+            fixedRect = OffsetLayoutRect(movingRect, separation, axis);
+        }
+    }
+
+    private double GetSiblingAxisCenter(MindMapNode node, string direction)
+    {
+        NodeLayoutRect bounds = GetDisplayedSubtreeLayoutRect(node);
+        return direction is "Down" or "Up"
+            ? (bounds.Left + bounds.Right) / 2
+            : (bounds.Top + bounds.Bottom) / 2;
+    }
+
+    private NodeLayoutRect GetDisplayedSubtreeLayoutRect(MindMapNode node)
+    {
+        Rect bounds = GetNodeBounds(TraverseDisplayed(node).ToList());
+        return new NodeLayoutRect(bounds.Left, bounds.Top, bounds.Right, bounds.Bottom);
+    }
+
+    private static NodeLayoutRect ToLayoutRect(MindMapNode node, Size size)
+    {
+        return new NodeLayoutRect(node.X, node.Y, node.X + size.Width, node.Y + size.Height);
+    }
+
+    private static NodeLayoutRect OffsetLayoutRect(NodeLayoutRect rect, double offset, NodeLayoutAxis axis)
+    {
+        return axis == NodeLayoutAxis.Horizontal
+            ? rect with { Left = rect.Left + offset, Right = rect.Right + offset }
+            : rect with { Top = rect.Top + offset, Bottom = rect.Bottom + offset };
+    }
+
+    private static void ShiftSubtreeAlongAxis(MindMapNode node, double offset, NodeLayoutAxis axis)
+    {
+        if (Math.Abs(offset) < 0.001)
+        {
+            return;
+        }
+
+        if (axis == NodeLayoutAxis.Horizontal)
+        {
+            ShiftSubtreeX(node, offset);
+        }
+        else
+        {
+            ShiftSubtreeY(node, offset);
+        }
     }
 
     private void SnapNodeToGrid(MindMapNode node)
@@ -4660,20 +4942,6 @@ public partial class MainWindow : Window
         foreach (MindMapNode child in node.Children)
         {
             ShiftSubtreeX(child, offsetX);
-        }
-    }
-
-    private void UpdateRenderedSubtreePosition(MindMapNode node)
-    {
-        if (_nodeControls.TryGetValue(node.Id, out Border? border))
-        {
-            Canvas.SetLeft(border, node.X);
-            Canvas.SetTop(border, node.Y);
-        }
-
-        foreach (MindMapNode child in node.Children)
-        {
-            UpdateRenderedSubtreePosition(child);
         }
     }
 
@@ -5422,11 +5690,23 @@ public partial class MainWindow : Window
         }
 
         PushUndoSnapshot();
+        EndTextEditLayoutSession();
+        Dictionary<Guid, Size> oldSizes = targets.ToDictionary(node => node.Id, MeasureNodeSize);
         foreach (MindMapNode node in targets)
         {
             apply(node);
             NormalizeNodeStyle(node);
-            EnsureChildSubtreeHasHorizontalRoom(node);
+        }
+
+        foreach (MindMapNode node in targets)
+        {
+            Size oldSize = oldSizes[node.Id];
+            Size newSize = MeasureNodeSize(node);
+            if (Math.Abs(oldSize.Width - newSize.Width) >= 0.001 ||
+                Math.Abs(oldSize.Height - newSize.Height) >= 0.001)
+            {
+                ApplyNodeSizeChangeLayout(node, oldSize, newSize);
+            }
         }
 
         MarkCurrentDocumentDirty();
