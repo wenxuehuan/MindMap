@@ -5,6 +5,27 @@ namespace SWDT.Tests;
 public sealed class NodeLayoutGeometryTests
 {
     [Theory]
+    [InlineData("Right", 370, 100)]
+    [InlineData("Left", 30, 100)]
+    [InlineData("DownRight", 370, 100)]
+    [InlineData("DownLeft", 30, 100)]
+    [InlineData("Down", 100, 192)]
+    [InlineData("Up", 100, 88)]
+    public void GetSummaryChildOrigin_StartsAtSummaryEdge(
+        string direction,
+        double expectedX,
+        double expectedY)
+    {
+        NodeLayoutOffset result = NodeLayoutGeometry.GetSummaryChildOrigin(
+            direction,
+            new NodeLayoutRect(100, 100, 300, 180),
+            70,
+            12);
+
+        Assert.Equal(new NodeLayoutOffset(expectedX, expectedY), result);
+    }
+
+    [Theory]
     [InlineData("Left", -180, -18)]
     [InlineData("DownLeft", -180, -18)]
     [InlineData("Right", 0, -18)]
@@ -86,4 +107,20 @@ public sealed class NodeLayoutGeometryTests
             12,
             NodeLayoutAxis.Vertical));
     }
+
+    [Fact]
+    public void GetFollowingBranchSeparation_ReservesEntireSummarySubtreeHeight()
+    {
+        NodeLayoutRect summarySubtree = new(400, 100, 900, 520);
+        NodeLayoutRect followingBranch = new(70, 270, 460, 340);
+
+        double result = NodeLayoutGeometry.GetFollowingBranchSeparation(
+            summarySubtree,
+            followingBranch,
+            12,
+            NodeLayoutAxis.Vertical);
+
+        Assert.Equal(262, result);
+    }
+
 }

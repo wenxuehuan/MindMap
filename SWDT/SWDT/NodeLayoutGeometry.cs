@@ -14,6 +14,21 @@ internal readonly record struct NodeLayoutRect(double Left, double Top, double R
 
 internal static class NodeLayoutGeometry
 {
+    public static NodeLayoutOffset GetSummaryChildOrigin(
+        string direction,
+        NodeLayoutRect summaryRect,
+        double horizontalGap,
+        double verticalGap)
+    {
+        return direction switch
+        {
+            "Left" or "DownLeft" => new NodeLayoutOffset(summaryRect.Left - horizontalGap, summaryRect.Top),
+            "Down" => new NodeLayoutOffset(summaryRect.Left, summaryRect.Bottom + verticalGap),
+            "Up" => new NodeLayoutOffset(summaryRect.Left, summaryRect.Top - verticalGap),
+            _ => new NodeLayoutOffset(summaryRect.Right + horizontalGap, summaryRect.Top)
+        };
+    }
+
     public static NodeLayoutOffset GetAnchoredOffset(
         string direction,
         NodeLayoutSize oldSize,
@@ -53,4 +68,20 @@ internal static class NodeLayoutGeometry
         double movingStart = axis == NodeLayoutAxis.Horizontal ? movingRect.Left : movingRect.Top;
         return Math.Max(0, fixedEnd + gap - movingStart);
     }
+
+    public static double GetFollowingBranchSeparation(
+        NodeLayoutRect summarySubtreeRect,
+        NodeLayoutRect followingBranchRect,
+        double gap,
+        NodeLayoutAxis axis)
+    {
+        double summaryEnd = axis == NodeLayoutAxis.Horizontal
+            ? summarySubtreeRect.Right
+            : summarySubtreeRect.Bottom;
+        double followingStart = axis == NodeLayoutAxis.Horizontal
+            ? followingBranchRect.Left
+            : followingBranchRect.Top;
+        return Math.Max(0, summaryEnd + gap - followingStart);
+    }
+
 }

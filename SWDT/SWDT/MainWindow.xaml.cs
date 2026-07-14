@@ -27,6 +27,7 @@ public partial class MainWindow : Window
     private const double NodeHorizontalPadding = 22;
     private const double NodeVerticalPadding = 18;
     private const double NodeFontSize = 14;
+    private const double NodeVisibilityMargin = 24;
     private const string DocumentDragFormat = "SWDT.MindMapDocument";
     private const int MaxRecentFiles = 10;
     private const int MaxHistoryEntries = 100;
@@ -909,7 +910,8 @@ public partial class MainWindow : Window
         {
             MindMapNode parent = child.Parent!;
             (Point start, Point end) = GetParentChildConnectionPoints(parent, MeasureNodeSize(parent), child, MeasureNodeSize(child));
-            AddMiniMapLine(start, end, CreateBrush(parent.ConnectorColor, Color.FromRgb(148, 163, 184)), 1);
+            MindMapNode connectorStyle = NodeLayoutHierarchy.GetStructuralConnectorStyle(parent, child);
+            AddMiniMapLine(start, end, CreateBrush(connectorStyle.ConnectorColor, Color.FromRgb(148, 163, 184)), 1);
         }
 
         foreach (MindMapNode summary in nodes.Where(node => node.IsSummary))
@@ -1181,19 +1183,20 @@ public partial class MainWindow : Window
                 start = GetCollapseToggleCenter(parent, parentSize);
             }
 
-            Brush connectorBrush = CreateBrush(parent.ConnectorColor, Color.FromRgb(148, 163, 184));
+            MindMapNode connectorStyle = NodeLayoutHierarchy.GetStructuralConnectorStyle(parent, child);
+            Brush connectorBrush = CreateBrush(connectorStyle.ConnectorColor, Color.FromRgb(148, 163, 184));
 
             System.Windows.Shapes.Path connector = new()
             {
                 Stroke = connectorBrush,
-                StrokeThickness = parent.ConnectorThickness,
-                StrokeDashArray = GetConnectorDashArray(parent.ConnectorDashStyle),
-                Data = CreateConnectorGeometry(start, end, parent.ConnectorShape),
+                StrokeThickness = connectorStyle.ConnectorThickness,
+                StrokeDashArray = GetConnectorDashArray(connectorStyle.ConnectorDashStyle),
+                Data = CreateConnectorGeometry(start, end, connectorStyle.ConnectorShape),
                 IsHitTestVisible = false
             };
 
             MindMapCanvas.Children.Insert(0, connector);
-            DrawConnectorArrowheads(start, end, parent.ConnectorArrowStyle, connectorBrush, parent.ConnectorThickness, insertBehindNodes: true);
+            DrawConnectorArrowheads(start, end, connectorStyle.ConnectorArrowStyle, connectorBrush, connectorStyle.ConnectorThickness, insertBehindNodes: true);
             DrawConnections(child);
         }
     }
@@ -1430,6 +1433,9 @@ public partial class MainWindow : Window
     {
         Point toggleCenter = GetCollapseToggleCenter(node, nodeSize);
         string direction = NormalizeLayoutDirection(GetVisibleRoot(node).LayoutDirection);
+        MindMapNode connectorStyle = node.IsSummary
+            ? GetLayoutChildren(node).FirstOrDefault() ?? node
+            : node;
         Point nodeAnchor = direction switch
         {
             "Left" or "DownLeft" => new Point(node.X, node.Y + nodeSize.Height / 2),
@@ -1440,9 +1446,9 @@ public partial class MainWindow : Window
 
         System.Windows.Shapes.Path trunk = new()
         {
-            Stroke = CreateBrush(node.ConnectorColor, Color.FromRgb(148, 163, 184)),
-            StrokeThickness = node.ConnectorThickness,
-            StrokeDashArray = GetConnectorDashArray(node.ConnectorDashStyle),
+            Stroke = CreateBrush(connectorStyle.ConnectorColor, Color.FromRgb(148, 163, 184)),
+            StrokeThickness = connectorStyle.ConnectorThickness,
+            StrokeDashArray = GetConnectorDashArray(connectorStyle.ConnectorDashStyle),
             Data = new LineGeometry(nodeAnchor, toggleCenter),
             IsHitTestVisible = false
         };
@@ -2196,7 +2202,7 @@ public partial class MainWindow : Window
             X = parent.X + MeasureNodeSize(parent).Width + parent.HorizontalGap,
             Y = parent.Y + (parent.Children.Count + 1) * 24
         };
-        CopyVisualStyle(parent, child);
+        CopyChildVisualStyle(parent, child);
         PositionNewChildNode(parent, child);
 
         PushUndoSnapshot();
@@ -2409,6 +2415,18 @@ public partial class MainWindow : Window
         target.ConnectorArrowStyle = source.ConnectorArrowStyle;
     }
 
+    private void CopyChildVisualStyle(MindMapNode parent, MindMapNode child)
+    {
+        MindMapNode? styleSource = NodeLayoutHierarchy.FindChildStyleSource(parent, TraverseVisibleNodes());
+
+        if (styleSource is not null)
+        {
+            CopyVisualStyle(styleSource, child);
+        }
+
+        NormalizeNodeStyle(child);
+    }
+
     private void PositionNewChildNode(MindMapNode parent, MindMapNode child)
     {
         MindMapNode root = GetVisibleRoot(parent);
@@ -2564,7 +2582,7 @@ public partial class MainWindow : Window
             Title = Localization.T("NewTopic"),
             Parent = parent
         };
-        CopyVisualStyle(parent, sibling);
+        CopyChildVisualStyle(parent, sibling);
         PositionNewSiblingNode(_selectedNode, sibling);
 
         int selectedIndex = parent.Children.IndexOf(_selectedNode);
@@ -2599,22 +2617,40 @@ public partial class MainWindow : Window
             return;
         }
 
-        MindMapNode parent = _selectedNode.Parent ?? _root;
-        if (IsVisibleRoot(_selectedNode) && VisibleRoots.Count <= 1)
+        HashSet<Guid> selectedIds = _selectedNodeIds.Count > 0
+            ? [.. _selectedNodeIds]
+            : [_selectedNode.Id];
+        NodeDeletionPlan deletionPlan = NodeDeletionPlanner.Create(_root, selectedIds);
+        if (deletionPlan.Targets.Count == 0)
+        {
+            StatusText.Text = Localization.T("SelectNodeToDelete");
+            return;
+        }
+
+        if (deletionPlan.RemovesAllVisibleRoots)
         {
             StatusText.Text = Localization.T("KeepOneRoot");
             return;
         }
 
-        HashSet<Guid> removedIds = Traverse(_selectedNode).Select(node => node.Id).ToHashSet();
+        MindMapNode? preferredParent = _selectedNode.Parent;
         PushUndoSnapshot();
-        parent.Children.Remove(_selectedNode);
-        RemoveSummaryReferences(removedIds);
+        foreach (MindMapNode target in deletionPlan.Targets)
+        {
+            target.Parent?.Children.Remove(target);
+        }
+
+        RemoveSummaryReferences(deletionPlan.RemovedNodeIds);
         CurrentDocument.Connections.RemoveAll(connection =>
-            removedIds.Contains(connection.SourceNodeId) || removedIds.Contains(connection.TargetNodeId));
+            deletionPlan.RemovedNodeIds.Contains(connection.SourceNodeId) ||
+            deletionPlan.RemovedNodeIds.Contains(connection.TargetNodeId));
         MarkCurrentDocumentDirty();
         AutoLayoutMap();
-        MindMapNode? nextSelection = parent.IsCanvasRoot ? VisibleRoots.FirstOrDefault() : parent;
+        MindMapNode? nextSelection = preferredParent is not null &&
+            !preferredParent.IsCanvasRoot &&
+            !deletionPlan.RemovedNodeIds.Contains(preferredParent.Id)
+                ? preferredParent
+                : VisibleRoots.FirstOrDefault();
         if (nextSelection is not null)
         {
             SelectNode(nextSelection);
@@ -2624,10 +2660,13 @@ public partial class MainWindow : Window
             SelectCanvas();
         }
 
-        RenderCanvas();
+        StatusText.Text = string.Format(
+            CultureInfo.CurrentCulture,
+            Localization.T("NodesDeleted"),
+            deletionPlan.RemovedNodeIds.Count);
     }
 
-    private void RemoveSummaryReferences(HashSet<Guid> removedIds)
+    private void RemoveSummaryReferences(IReadOnlySet<Guid> removedIds)
     {
         foreach (MindMapNode node in TraverseVisibleNodes().Where(node => node.IsSummary))
         {
@@ -2998,9 +3037,10 @@ public partial class MainWindow : Window
             (Point start, Point end) = GetParentChildConnectionPoints(parent, parentSize, child, childSize);
             Point exportStart = TransformExportPoint(start, bounds);
             Point exportEnd = TransformExportPoint(end, bounds);
-            Brush connectorBrush = CreateBrush(parent.ConnectorColor, Color.FromRgb(148, 163, 184));
-            AddExportConnector(targetCanvas, exportStart, exportEnd, parent.ConnectorShape, parent.ConnectorDashStyle, connectorBrush, parent.ConnectorThickness);
-            DrawExportArrowheads(targetCanvas, exportStart, exportEnd, parent.ConnectorArrowStyle, connectorBrush, parent.ConnectorThickness);
+            MindMapNode connectorStyle = NodeLayoutHierarchy.GetStructuralConnectorStyle(parent, child);
+            Brush connectorBrush = CreateBrush(connectorStyle.ConnectorColor, Color.FromRgb(148, 163, 184));
+            AddExportConnector(targetCanvas, exportStart, exportEnd, connectorStyle.ConnectorShape, connectorStyle.ConnectorDashStyle, connectorBrush, connectorStyle.ConnectorThickness);
+            DrawExportArrowheads(targetCanvas, exportStart, exportEnd, connectorStyle.ConnectorArrowStyle, connectorBrush, connectorStyle.ConnectorThickness);
             DrawExportConnections(targetCanvas, child, bounds);
         }
     }
@@ -3948,6 +3988,7 @@ public partial class MainWindow : Window
         _selectedNodeIds.Clear();
         _selectedNodeIds.Add(node.Id);
         RenderCanvas();
+        EnsureNodeVisible(node, prioritizeInlineCaret: false);
         if (focusTitle)
         {
             QueueInlineEditorFocus(node.Id, selectAll: true);
@@ -4156,7 +4197,71 @@ public partial class MainWindow : Window
 
         UpdateStats();
         UpdateMiniMapContent();
+        QueueEnsureNodeVisible(_selectedNode.Id, prioritizeInlineCaret: _editingNodeId == _selectedNode.Id);
         StatusText.Text = string.Format(CultureInfo.CurrentCulture, Localization.T("SelectedNode"), _selectedNode.Title);
+    }
+
+    private void EnsureNodeVisible(MindMapNode node, bool prioritizeInlineCaret)
+    {
+        Size nodeSize = MeasureNodeSize(node);
+        ViewportVisibilityBounds? priorityBounds = prioritizeInlineCaret
+            ? GetInlineCaretViewportBounds(node.Id)
+            : null;
+        ViewportTranslationDelta delta = ViewportVisibilityGeometry.GetTranslationDelta(
+            new ViewportVisibilityBounds(node.X, node.Y, nodeSize.Width, nodeSize.Height),
+            new ViewportVisibilitySize(CanvasViewport.ActualWidth, CanvasViewport.ActualHeight),
+            CanvasScale.ScaleX,
+            CanvasTranslate.X,
+            CanvasTranslate.Y,
+            NodeVisibilityMargin,
+            priorityBounds);
+
+        if (Math.Abs(delta.X) < 0.001 && Math.Abs(delta.Y) < 0.001)
+        {
+            return;
+        }
+
+        CanvasTranslate.X += delta.X;
+        CanvasTranslate.Y += delta.Y;
+        ApplyCanvasAppearance();
+        CaptureDocumentView();
+    }
+
+    private ViewportVisibilityBounds? GetInlineCaretViewportBounds(Guid nodeId)
+    {
+        if (_inlineTitleBox is not TextBox { Tag: Guid editorNodeId } editor || editorNodeId != nodeId)
+        {
+            return null;
+        }
+
+        int caretIndex = Math.Clamp(editor.CaretIndex, 0, editor.Text.Length);
+        Rect caretRect = editor.GetRectFromCharacterIndex(caretIndex);
+        if (caretRect.IsEmpty)
+        {
+            return null;
+        }
+
+        Point topLeft = editor.TranslatePoint(caretRect.TopLeft, CanvasViewport);
+        Point bottomRight = editor.TranslatePoint(caretRect.BottomRight, CanvasViewport);
+        return new ViewportVisibilityBounds(
+            Math.Min(topLeft.X, bottomRight.X),
+            Math.Min(topLeft.Y, bottomRight.Y),
+            Math.Max(1, Math.Abs(bottomRight.X - topLeft.X)),
+            Math.Max(1, Math.Abs(bottomRight.Y - topLeft.Y)));
+    }
+
+    private void QueueEnsureNodeVisible(Guid nodeId, bool prioritizeInlineCaret)
+    {
+        Dispatcher.BeginInvoke(DispatcherPriority.Render, () =>
+        {
+            if (_selectedNode?.Id != nodeId)
+            {
+                return;
+            }
+
+            bool shouldPrioritizeCaret = prioritizeInlineCaret && _editingNodeId == nodeId;
+            EnsureNodeVisible(_selectedNode, shouldPrioritizeCaret);
+        });
     }
 
     private void RefreshNodeLayoutVisuals()
@@ -4280,7 +4385,7 @@ public partial class MainWindow : Window
         foreach (MindMapNode root in VisibleRoots.Where(node => !node.IsSummary))
         {
             ArrangeVisibleRoot(root, new Point(110, nextTop));
-            List<MindMapNode> structuralNodes = TraverseDisplayed(root).Where(node => !node.IsSummary).ToList();
+            List<MindMapNode> structuralNodes = NodeLayoutHierarchy.TraverseStructuralNodes(root).ToList();
             Rect bounds = GetNodeBounds(structuralNodes);
             double shiftX = 110 - bounds.Left;
             double shiftY = nextTop - bounds.Top;
@@ -4316,25 +4421,228 @@ public partial class MainWindow : Window
             Size summarySize = MeasureNodeSize(summary);
             MindMapNode root = GetVisibleRoot(sources[0]);
             string direction = NormalizeLayoutDirection(root.LayoutDirection);
-            switch (direction)
+            PositionSummaryAnchor(summary, sourceBounds, summarySize, root, direction);
+
+            ArrangeSummarySubtree(summary, direction, root.HorizontalGap, root.VerticalGap);
+            ReserveSummarySubtreeSpace(summary, sources, root, direction);
+        }
+    }
+
+    private static void PositionSummaryAnchor(
+        MindMapNode summary,
+        Rect sourceBounds,
+        Size summarySize,
+        MindMapNode root,
+        string direction)
+    {
+        switch (direction)
+        {
+            case "Left":
+            case "DownLeft":
+                summary.X = sourceBounds.Left - root.HorizontalGap - summarySize.Width;
+                summary.Y = sourceBounds.Top + (sourceBounds.Height - summarySize.Height) / 2;
+                break;
+            case "Down":
+                summary.X = sourceBounds.Left + (sourceBounds.Width - summarySize.Width) / 2;
+                summary.Y = sourceBounds.Bottom + root.VerticalGap;
+                break;
+            case "Up":
+                summary.X = sourceBounds.Left + (sourceBounds.Width - summarySize.Width) / 2;
+                summary.Y = sourceBounds.Top - root.VerticalGap - summarySize.Height;
+                break;
+            default:
+                summary.X = sourceBounds.Right + root.HorizontalGap;
+                summary.Y = sourceBounds.Top + (sourceBounds.Height - summarySize.Height) / 2;
+                break;
+        }
+    }
+
+    private void ReserveSummarySubtreeSpace(
+        MindMapNode summary,
+        IReadOnlyList<MindMapNode> sources,
+        MindMapNode root,
+        string direction)
+    {
+        if (summary.Parent is not MindMapNode commonAncestor || direction == "Radial")
+        {
+            return;
+        }
+
+        List<MindMapNode> siblingBranches = GetLayoutChildren(commonAncestor);
+        if (siblingBranches.Count == 0)
+        {
+            return;
+        }
+
+        HashSet<Guid> sourceBranchIds = sources
+            .Select(source => GetDirectChildUnderAncestor(source, commonAncestor))
+            .Where(branch => branch is not null)
+            .Select(branch => branch!.Id)
+            .ToHashSet();
+        int lastSourceBranchIndex = siblingBranches
+            .Select((branch, index) => sourceBranchIds.Contains(branch.Id) ? index : -1)
+            .DefaultIfEmpty(-1)
+            .Max();
+        int firstFollowingBranchIndex = lastSourceBranchIndex + 1;
+        if (firstFollowingBranchIndex < 0 || firstFollowingBranchIndex >= siblingBranches.Count)
+        {
+            return;
+        }
+
+        NodeLayoutAxis axis = direction is "Down" or "Up"
+            ? NodeLayoutAxis.Horizontal
+            : NodeLayoutAxis.Vertical;
+        double gap = axis == NodeLayoutAxis.Horizontal ? root.HorizontalGap : root.VerticalGap;
+        Rect summaryBounds = GetNodeBounds(TraverseDisplayed(summary).ToList());
+        Rect followingBounds = GetNodeBounds(
+            NodeLayoutHierarchy.TraverseStructuralNodes(siblingBranches[firstFollowingBranchIndex]).ToList());
+        double separation = NodeLayoutGeometry.GetFollowingBranchSeparation(
+            new NodeLayoutRect(summaryBounds.Left, summaryBounds.Top, summaryBounds.Right, summaryBounds.Bottom),
+            new NodeLayoutRect(followingBounds.Left, followingBounds.Top, followingBounds.Right, followingBounds.Bottom),
+            gap,
+            axis);
+        if (separation < 0.001)
+        {
+            return;
+        }
+
+        for (int index = firstFollowingBranchIndex; index < siblingBranches.Count; index++)
+        {
+            ShiftSubtreeAlongAxis(siblingBranches[index], separation, axis);
+        }
+
+        RecenterLayoutAncestors(commonAncestor, axis);
+    }
+
+    private static MindMapNode? GetDirectChildUnderAncestor(MindMapNode node, MindMapNode ancestor)
+    {
+        MindMapNode current = node;
+        while (current.Parent is not null && current.Parent != ancestor)
+        {
+            current = current.Parent;
+        }
+
+        return current.Parent == ancestor ? current : null;
+    }
+
+    private void RecenterLayoutAncestors(MindMapNode ancestor, NodeLayoutAxis axis)
+    {
+        MindMapNode? current = ancestor;
+        while (current is not null && !current.IsCanvasRoot)
+        {
+            List<MindMapNode> children = GetLayoutChildren(current);
+            if (children.Count > 0)
             {
-                case "Left":
-                case "DownLeft":
-                    summary.X = sourceBounds.Left - root.HorizontalGap - summarySize.Width;
-                    summary.Y = sourceBounds.Top + (sourceBounds.Height - summarySize.Height) / 2;
-                    break;
-                case "Down":
-                    summary.X = sourceBounds.Left + (sourceBounds.Width - summarySize.Width) / 2;
-                    summary.Y = sourceBounds.Bottom + root.VerticalGap;
-                    break;
-                case "Up":
-                    summary.X = sourceBounds.Left + (sourceBounds.Width - summarySize.Width) / 2;
-                    summary.Y = sourceBounds.Top - root.VerticalGap - summarySize.Height;
-                    break;
-                default:
-                    summary.X = sourceBounds.Right + root.HorizontalGap;
-                    summary.Y = sourceBounds.Top + (sourceBounds.Height - summarySize.Height) / 2;
-                    break;
+                Rect firstBounds = GetNodeBounds(NodeLayoutHierarchy.TraverseStructuralNodes(children[0]).ToList());
+                Rect lastBounds = GetNodeBounds(NodeLayoutHierarchy.TraverseStructuralNodes(children[^1]).ToList());
+                Size currentSize = MeasureNodeSize(current);
+                if (axis == NodeLayoutAxis.Vertical)
+                {
+                    double firstCenter = firstBounds.Top + firstBounds.Height / 2;
+                    double lastCenter = lastBounds.Top + lastBounds.Height / 2;
+                    current.Y = (firstCenter + lastCenter) / 2 - currentSize.Height / 2;
+                }
+                else
+                {
+                    double firstCenter = firstBounds.Left + firstBounds.Width / 2;
+                    double lastCenter = lastBounds.Left + lastBounds.Width / 2;
+                    current.X = (firstCenter + lastCenter) / 2 - currentSize.Width / 2;
+                }
+            }
+
+            current = current.Parent;
+        }
+    }
+
+    private void ArrangeSummarySubtree(
+        MindMapNode summary,
+        string direction,
+        double horizontalGap,
+        double verticalGap)
+    {
+        List<MindMapNode> children = GetLayoutChildren(summary);
+        if (children.Count == 0)
+        {
+            return;
+        }
+
+        Size summarySize = MeasureNodeSize(summary);
+        NodeLayoutOffset childOrigin = NodeLayoutGeometry.GetSummaryChildOrigin(
+            direction,
+            new NodeLayoutRect(
+                summary.X,
+                summary.Y,
+                summary.X + summarySize.Width,
+                summary.Y + summarySize.Height),
+            horizontalGap,
+            verticalGap);
+
+        switch (direction)
+        {
+            case "Left":
+            {
+                double nextY = childOrigin.Y;
+                foreach (MindMapNode child in children)
+                {
+                    ArrangeNodeLeft(child, childOrigin.X, ref nextY, horizontalGap, verticalGap);
+                }
+
+                break;
+            }
+            case "Down":
+            {
+                double nextX = childOrigin.X;
+                foreach (MindMapNode child in children)
+                {
+                    ArrangeNodeDown(child, childOrigin.Y, ref nextX, horizontalGap, verticalGap);
+                }
+
+                break;
+            }
+            case "Up":
+            {
+                double nextX = childOrigin.X;
+                foreach (MindMapNode child in children)
+                {
+                    ArrangeNodeUp(child, childOrigin.Y, ref nextX, horizontalGap, verticalGap);
+                }
+
+                break;
+            }
+            case "DownLeft":
+            {
+                double nextChildY = childOrigin.Y;
+                foreach (MindMapNode child in children)
+                {
+                    Rect childBounds = ArrangeNodeDownLeft(child, childOrigin.X, nextChildY, horizontalGap, verticalGap);
+                    nextChildY = childBounds.Bottom + verticalGap;
+                }
+
+                break;
+            }
+            case "DownRight":
+            {
+                double nextChildY = childOrigin.Y;
+                foreach (MindMapNode child in children)
+                {
+                    Rect childBounds = ArrangeNodeDownRight(child, childOrigin.X, nextChildY, horizontalGap, verticalGap);
+                    nextChildY = childBounds.Bottom + verticalGap;
+                }
+
+                break;
+            }
+            case "Radial":
+                ArrangeNodeRadial(summary, new Point(summary.X, summary.Y), horizontalGap, verticalGap);
+                break;
+            default:
+            {
+                double nextY = childOrigin.Y;
+                foreach (MindMapNode child in children)
+                {
+                    ArrangeNodeRight(child, childOrigin.X, ref nextY, horizontalGap, verticalGap);
+                }
+
+                break;
             }
         }
     }
@@ -4639,7 +4947,7 @@ public partial class MainWindow : Window
             }
         }
 
-        List<MindMapNode> nodes = children.SelectMany(Traverse).Where(node => !node.IsSummary).ToList();
+        List<MindMapNode> nodes = children.SelectMany(NodeLayoutHierarchy.TraverseStructuralNodes).ToList();
         Rect bounds = GetNodeBounds(nodes);
         Size rootSize = MeasureNodeSize(root);
         Point rootCenter = new(root.X + rootSize.Width / 2, root.Y + rootSize.Height / 2);
