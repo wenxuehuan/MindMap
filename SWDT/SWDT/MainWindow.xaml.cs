@@ -4395,6 +4395,7 @@ public partial class MainWindow : Window
         }
 
         PositionSummaryNodes();
+        ReflowLayoutFootprints();
     }
 
     private static List<MindMapNode> GetLayoutChildren(MindMapNode node)
@@ -4424,7 +4425,6 @@ public partial class MainWindow : Window
             PositionSummaryAnchor(summary, sourceBounds, summarySize, root, direction);
 
             ArrangeSummarySubtree(summary, direction, root.HorizontalGap, root.VerticalGap);
-            ReserveSummarySubtreeSpace(summary, sources, root, direction);
         }
     }
 
@@ -4457,101 +4457,247 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ReserveSummarySubtreeSpace(
-        MindMapNode summary,
-        IReadOnlyList<MindMapNode> sources,
-        MindMapNode root,
-        string direction)
+    private void ReflowLayoutFootprints()
     {
-        if (summary.Parent is not MindMapNode commonAncestor || direction == "Radial")
+        Dictionary<Guid, MindMapNode> nodeById = TraverseDisplayedNodes().ToDictionary(node => node.Id);
+        List<MindMapNode> summaries = nodeById.Values.Where(node => node.IsSummary).ToList();
+        if (summaries.Count == 0)
         {
             return;
         }
 
-        List<MindMapNode> siblingBranches = GetLayoutChildren(commonAncestor);
-        if (siblingBranches.Count == 0)
+        List<MindMapNode> parents = nodeById.Values
+            .Where(node => !node.IsSummary)
+            .OrderByDescending(GetNodeDepth)
+            .ToList();
+        if (_root.IsCanvasRoot)
         {
-            return;
+            parents.Add(_root);
         }
 
-        HashSet<Guid> sourceBranchIds = sources
-            .Select(source => GetDirectChildUnderAncestor(source, commonAncestor))
-            .Where(branch => branch is not null)
-            .Select(branch => branch!.Id)
-            .ToHashSet();
-        int lastSourceBranchIndex = siblingBranches
-            .Select((branch, index) => sourceBranchIds.Contains(branch.Id) ? index : -1)
-            .DefaultIfEmpty(-1)
-            .Max();
-        int firstFollowingBranchIndex = lastSourceBranchIndex + 1;
-        if (firstFollowingBranchIndex < 0 || firstFollowingBranchIndex >= siblingBranches.Count)
+        int maxDepth = parents.Count == 0 ? 1 : parents.Max(GetNodeDepth);
+        int maxPasses = Math.Max(4, (maxDepth + summaries.Count + 1) * 2);
+        for (int pass = 0; pass < maxPasses; pass++)
         {
-            return;
-        }
-
-        NodeLayoutAxis axis = direction is "Down" or "Up"
-            ? NodeLayoutAxis.Horizontal
-            : NodeLayoutAxis.Vertical;
-        double gap = axis == NodeLayoutAxis.Horizontal ? root.HorizontalGap : root.VerticalGap;
-        Rect summaryBounds = GetNodeBounds(TraverseDisplayed(summary).ToList());
-        Rect followingBounds = GetNodeBounds(
-            NodeLayoutHierarchy.TraverseStructuralNodes(siblingBranches[firstFollowingBranchIndex]).ToList());
-        double separation = NodeLayoutGeometry.GetFollowingBranchSeparation(
-            new NodeLayoutRect(summaryBounds.Left, summaryBounds.Top, summaryBounds.Right, summaryBounds.Bottom),
-            new NodeLayoutRect(followingBounds.Left, followingBounds.Top, followingBounds.Right, followingBounds.Bottom),
-            gap,
-            axis);
-        if (separation < 0.001)
-        {
-            return;
-        }
-
-        for (int index = firstFollowingBranchIndex; index < siblingBranches.Count; index++)
-        {
-            ShiftSubtreeAlongAxis(siblingBranches[index], separation, axis);
-        }
-
-        RecenterLayoutAncestors(commonAncestor, axis);
-    }
-
-    private static MindMapNode? GetDirectChildUnderAncestor(MindMapNode node, MindMapNode ancestor)
-    {
-        MindMapNode current = node;
-        while (current.Parent is not null && current.Parent != ancestor)
-        {
-            current = current.Parent;
-        }
-
-        return current.Parent == ancestor ? current : null;
-    }
-
-    private void RecenterLayoutAncestors(MindMapNode ancestor, NodeLayoutAxis axis)
-    {
-        MindMapNode? current = ancestor;
-        while (current is not null && !current.IsCanvasRoot)
-        {
-            List<MindMapNode> children = GetLayoutChildren(current);
-            if (children.Count > 0)
+            double maximumMovement = ReanchorSummarySubtrees(summaries, nodeById);
+            foreach (MindMapNode parent in parents)
             {
-                Rect firstBounds = GetNodeBounds(NodeLayoutHierarchy.TraverseStructuralNodes(children[0]).ToList());
-                Rect lastBounds = GetNodeBounds(NodeLayoutHierarchy.TraverseStructuralNodes(children[^1]).ToList());
-                Size currentSize = MeasureNodeSize(current);
-                if (axis == NodeLayoutAxis.Vertical)
-                {
-                    double firstCenter = firstBounds.Top + firstBounds.Height / 2;
-                    double lastCenter = lastBounds.Top + lastBounds.Height / 2;
-                    current.Y = (firstCenter + lastCenter) / 2 - currentSize.Height / 2;
-                }
-                else
-                {
-                    double firstCenter = firstBounds.Left + firstBounds.Width / 2;
-                    double lastCenter = lastBounds.Left + lastBounds.Width / 2;
-                    current.X = (firstCenter + lastCenter) / 2 - currentSize.Width / 2;
-                }
+                maximumMovement = Math.Max(maximumMovement, ReflowParentFootprints(parent, nodeById));
             }
 
+            if (maximumMovement < 0.001)
+            {
+                break;
+            }
+        }
+    }
+
+    private double ReanchorSummarySubtrees(
+        IReadOnlyList<MindMapNode> summaries,
+        IReadOnlyDictionary<Guid, MindMapNode> nodeById)
+    {
+        double maximumMovement = 0;
+        foreach (MindMapNode summary in summaries)
+        {
+            List<MindMapNode> sources = GetDisplayedSummarySources(summary, nodeById);
+            if (sources.Count == 0)
+            {
+                continue;
+            }
+
+            Point previousPosition = new(summary.X, summary.Y);
+            MindMapNode root = GetVisibleRoot(sources[0]);
+            string direction = NormalizeLayoutDirection(root.LayoutDirection);
+            PositionSummaryAnchor(summary, GetNodeBounds(sources), MeasureNodeSize(summary), root, direction);
+            Point targetPosition = new(summary.X, summary.Y);
+            summary.X = previousPosition.X;
+            summary.Y = previousPosition.Y;
+            double deltaX = targetPosition.X - previousPosition.X;
+            double deltaY = targetPosition.Y - previousPosition.Y;
+            ShiftSubtree(summary, deltaX, deltaY);
+            maximumMovement = Math.Max(maximumMovement, Math.Max(Math.Abs(deltaX), Math.Abs(deltaY)));
+            maximumMovement = Math.Max(maximumMovement, CenterSummaryChildSubtrees(summary, direction));
+        }
+
+        return maximumMovement;
+    }
+
+    private double ReflowParentFootprints(
+        MindMapNode parent,
+        IReadOnlyDictionary<Guid, MindMapNode> nodeById)
+    {
+        List<MindMapNode> branches = GetLayoutChildren(parent);
+        if (branches.Count == 0)
+        {
+            return 0;
+        }
+
+        MindMapNode? visibleRoot = parent.IsCanvasRoot ? null : GetVisibleRoot(parent);
+        string direction = parent.IsCanvasRoot
+            ? "Right"
+            : NormalizeLayoutDirection(visibleRoot!.LayoutDirection);
+        if (direction == "Radial")
+        {
+            return 0;
+        }
+
+        NodeLayoutAxis axis = parent.IsCanvasRoot || direction is not ("Down" or "Up")
+            ? NodeLayoutAxis.Vertical
+            : NodeLayoutAxis.Horizontal;
+        double gap = parent.IsCanvasRoot
+            ? Math.Max(90, VisibleRoots.Select(root => root.VerticalGap * 2).DefaultIfEmpty(90).Max())
+            : axis == NodeLayoutAxis.Horizontal ? visibleRoot!.HorizontalGap : visibleRoot!.VerticalGap;
+        List<SummaryBranchAttachment> attachments = GetSummaryAttachments(parent, branches, nodeById);
+        IReadOnlyList<LayoutBranchSpan> groups = LayoutFootprintGeometry.CreateMergedBranchGroups(
+            branches.Count,
+            attachments.Select(attachment => attachment.SourceSpan));
+        List<LayoutFootprint> footprints = groups
+            .Select(group => GetBranchGroupFootprint(group, branches, attachments, axis))
+            .ToList();
+        IReadOnlyList<double> offsets = LayoutFootprintGeometry.GetCumulativeForwardOffsets(footprints, gap);
+        double maximumMovement = 0;
+        for (int groupIndex = 0; groupIndex < groups.Count; groupIndex++)
+        {
+            double offset = offsets[groupIndex];
+            if (offset < 0.001)
+            {
+                continue;
+            }
+
+            LayoutBranchSpan group = groups[groupIndex];
+            for (int branchIndex = group.StartIndex; branchIndex <= group.EndIndex; branchIndex++)
+            {
+                ShiftSubtreeAlongAxis(branches[branchIndex], offset, axis);
+            }
+
+            foreach (SummaryBranchAttachment attachment in GetAttachmentsForGroup(group, attachments))
+            {
+                ShiftSubtreeAlongAxis(attachment.Summary, offset, axis);
+            }
+
+            maximumMovement = Math.Max(maximumMovement, offset);
+        }
+
+        if (parent.IsCanvasRoot)
+        {
+            return maximumMovement;
+        }
+
+        footprints = groups
+            .Select(group => GetBranchGroupFootprint(group, branches, attachments, axis))
+            .ToList();
+        LayoutFootprint firstFootprint = footprints[0];
+        LayoutFootprint lastFootprint = footprints[^1];
+        Size parentSize = MeasureNodeSize(parent);
+        if (axis == NodeLayoutAxis.Vertical)
+        {
+            double nextY = (((firstFootprint.Start + firstFootprint.End) / 2) +
+                ((lastFootprint.Start + lastFootprint.End) / 2)) / 2 - parentSize.Height / 2;
+            maximumMovement = Math.Max(maximumMovement, Math.Abs(nextY - parent.Y));
+            parent.Y = nextY;
+        }
+        else
+        {
+            double nextX = (((firstFootprint.Start + firstFootprint.End) / 2) +
+                ((lastFootprint.Start + lastFootprint.End) / 2)) / 2 - parentSize.Width / 2;
+            maximumMovement = Math.Max(maximumMovement, Math.Abs(nextX - parent.X));
+            parent.X = nextX;
+        }
+
+        return maximumMovement;
+    }
+
+    private readonly record struct SummaryBranchAttachment(
+        MindMapNode Summary,
+        LayoutBranchSpan SourceSpan);
+
+    private List<SummaryBranchAttachment> GetSummaryAttachments(
+        MindMapNode parent,
+        IReadOnlyList<MindMapNode> branches,
+        IReadOnlyDictionary<Guid, MindMapNode> nodeById)
+    {
+        List<SummaryBranchAttachment> attachments = [];
+        foreach (MindMapNode summary in parent.Children.Where(node => node.IsSummary))
+        {
+            List<MindMapNode> sources = GetDisplayedSummarySources(summary, nodeById);
+            if (sources.Count == 0)
+            {
+                continue;
+            }
+
+            LayoutBranchSpan? sourceSpan = NodeLayoutHierarchy.FindSourceBranchSpan(parent, branches, sources);
+            if (sourceSpan is null)
+            {
+                continue;
+            }
+
+            attachments.Add(new SummaryBranchAttachment(summary, sourceSpan.Value));
+        }
+
+        return attachments;
+    }
+
+    private LayoutFootprint GetBranchGroupFootprint(
+        LayoutBranchSpan group,
+        IReadOnlyList<MindMapNode> branches,
+        IReadOnlyList<SummaryBranchAttachment> attachments,
+        NodeLayoutAxis axis)
+    {
+        Rect firstBranchBounds = GetNodeBounds(TraverseDisplayed(branches[group.StartIndex]).ToList());
+        LayoutFootprint footprint = ToFootprint(firstBranchBounds, axis);
+        for (int branchIndex = group.StartIndex + 1; branchIndex <= group.EndIndex; branchIndex++)
+        {
+            Rect branchBounds = GetNodeBounds(TraverseDisplayed(branches[branchIndex]).ToList());
+            footprint = footprint.Union(ToFootprint(branchBounds, axis));
+        }
+
+        foreach (SummaryBranchAttachment attachment in GetAttachmentsForGroup(group, attachments))
+        {
+            Rect summaryBounds = GetNodeBounds(TraverseDisplayed(attachment.Summary).ToList());
+            footprint = footprint.Union(ToFootprint(summaryBounds, axis));
+        }
+
+        return footprint;
+    }
+
+    private static IEnumerable<SummaryBranchAttachment> GetAttachmentsForGroup(
+        LayoutBranchSpan group,
+        IEnumerable<SummaryBranchAttachment> attachments)
+    {
+        return attachments.Where(attachment =>
+            attachment.SourceSpan.StartIndex >= group.StartIndex &&
+            attachment.SourceSpan.EndIndex <= group.EndIndex);
+    }
+
+    private static LayoutFootprint ToFootprint(Rect bounds, NodeLayoutAxis axis)
+    {
+        return axis == NodeLayoutAxis.Horizontal
+            ? new LayoutFootprint(bounds.Left, bounds.Right)
+            : new LayoutFootprint(bounds.Top, bounds.Bottom);
+    }
+
+    private static int GetNodeDepth(MindMapNode node)
+    {
+        int depth = 0;
+        MindMapNode? current = node.Parent;
+        while (current is not null)
+        {
+            depth++;
             current = current.Parent;
         }
+
+        return depth;
+    }
+
+    private static List<MindMapNode> GetDisplayedSummarySources(
+        MindMapNode summary,
+        IReadOnlyDictionary<Guid, MindMapNode> nodeById)
+    {
+        return summary.SummarySourceIds
+            .Where(nodeById.ContainsKey)
+            .Select(id => nodeById[id])
+            .Where(node => !node.IsSummary)
+            .ToList();
     }
 
     private void ArrangeSummarySubtree(
@@ -4580,71 +4726,107 @@ public partial class MainWindow : Window
         switch (direction)
         {
             case "Left":
-            {
-                double nextY = childOrigin.Y;
-                foreach (MindMapNode child in children)
                 {
-                    ArrangeNodeLeft(child, childOrigin.X, ref nextY, horizontalGap, verticalGap);
-                }
+                    double nextY = childOrigin.Y;
+                    foreach (MindMapNode child in children)
+                    {
+                        ArrangeNodeLeft(child, childOrigin.X, ref nextY, horizontalGap, verticalGap);
+                    }
 
-                break;
-            }
+                    break;
+                }
             case "Down":
-            {
-                double nextX = childOrigin.X;
-                foreach (MindMapNode child in children)
                 {
-                    ArrangeNodeDown(child, childOrigin.Y, ref nextX, horizontalGap, verticalGap);
-                }
+                    double nextX = childOrigin.X;
+                    foreach (MindMapNode child in children)
+                    {
+                        ArrangeNodeDown(child, childOrigin.Y, ref nextX, horizontalGap, verticalGap);
+                    }
 
-                break;
-            }
+                    break;
+                }
             case "Up":
-            {
-                double nextX = childOrigin.X;
-                foreach (MindMapNode child in children)
                 {
-                    ArrangeNodeUp(child, childOrigin.Y, ref nextX, horizontalGap, verticalGap);
-                }
+                    double nextX = childOrigin.X;
+                    foreach (MindMapNode child in children)
+                    {
+                        ArrangeNodeUp(child, childOrigin.Y, ref nextX, horizontalGap, verticalGap);
+                    }
 
-                break;
-            }
+                    break;
+                }
             case "DownLeft":
-            {
-                double nextChildY = childOrigin.Y;
-                foreach (MindMapNode child in children)
                 {
-                    Rect childBounds = ArrangeNodeDownLeft(child, childOrigin.X, nextChildY, horizontalGap, verticalGap);
-                    nextChildY = childBounds.Bottom + verticalGap;
-                }
+                    double nextChildY = childOrigin.Y;
+                    foreach (MindMapNode child in children)
+                    {
+                        Rect childBounds = ArrangeNodeDownLeft(child, childOrigin.X, nextChildY, horizontalGap, verticalGap);
+                        nextChildY = childBounds.Bottom + verticalGap;
+                    }
 
-                break;
-            }
+                    break;
+                }
             case "DownRight":
-            {
-                double nextChildY = childOrigin.Y;
-                foreach (MindMapNode child in children)
                 {
-                    Rect childBounds = ArrangeNodeDownRight(child, childOrigin.X, nextChildY, horizontalGap, verticalGap);
-                    nextChildY = childBounds.Bottom + verticalGap;
-                }
+                    double nextChildY = childOrigin.Y;
+                    foreach (MindMapNode child in children)
+                    {
+                        Rect childBounds = ArrangeNodeDownRight(child, childOrigin.X, nextChildY, horizontalGap, verticalGap);
+                        nextChildY = childBounds.Bottom + verticalGap;
+                    }
 
-                break;
-            }
+                    break;
+                }
             case "Radial":
                 ArrangeNodeRadial(summary, new Point(summary.X, summary.Y), horizontalGap, verticalGap);
                 break;
             default:
-            {
-                double nextY = childOrigin.Y;
-                foreach (MindMapNode child in children)
                 {
-                    ArrangeNodeRight(child, childOrigin.X, ref nextY, horizontalGap, verticalGap);
-                }
+                    double nextY = childOrigin.Y;
+                    foreach (MindMapNode child in children)
+                    {
+                        ArrangeNodeRight(child, childOrigin.X, ref nextY, horizontalGap, verticalGap);
+                    }
 
-                break;
-            }
+                    break;
+                }
         }
+
+        CenterSummaryChildSubtrees(summary, direction);
+    }
+
+    private double CenterSummaryChildSubtrees(MindMapNode summary, string direction)
+    {
+        List<MindMapNode> children = GetLayoutChildren(summary);
+        if (children.Count == 0 || direction == "Radial")
+        {
+            return 0;
+        }
+
+        NodeLayoutAxis axis = NodeLayoutGeometry.GetChildGroupAxis(direction);
+        Size summarySize = MeasureNodeSize(summary);
+        Rect firstBounds = GetNodeBounds(TraverseDisplayed(children[0]).ToList());
+        Rect lastBounds = GetNodeBounds(TraverseDisplayed(children[^1]).ToList());
+        double offset = NodeLayoutGeometry.GetCenteredChildGroupOffset(
+            new NodeLayoutRect(
+                summary.X,
+                summary.Y,
+                summary.X + summarySize.Width,
+                summary.Y + summarySize.Height),
+            new NodeLayoutRect(firstBounds.Left, firstBounds.Top, firstBounds.Right, firstBounds.Bottom),
+            new NodeLayoutRect(lastBounds.Left, lastBounds.Top, lastBounds.Right, lastBounds.Bottom),
+            axis);
+        if (Math.Abs(offset) < 0.001)
+        {
+            return 0;
+        }
+
+        foreach (MindMapNode child in children)
+        {
+            ShiftSubtreeAlongAxis(child, offset, axis);
+        }
+
+        return Math.Abs(offset);
     }
 
     private void ArrangeVisibleRoot(MindMapNode root, Point origin)
@@ -4658,42 +4840,42 @@ public partial class MainWindow : Window
         switch (direction)
         {
             case "Left":
-            {
-                double nextY = origin.Y;
-                ArrangeNodeLeft(root, origin.X + rootSize.Width, ref nextY, hGap, vGap);
-                break;
-            }
+                {
+                    double nextY = origin.Y;
+                    ArrangeNodeLeft(root, origin.X + rootSize.Width, ref nextY, hGap, vGap);
+                    break;
+                }
             case "Down":
-            {
-                double nextX = origin.X;
-                ArrangeNodeDown(root, origin.Y, ref nextX, hGap, vGap);
-                break;
-            }
+                {
+                    double nextX = origin.X;
+                    ArrangeNodeDown(root, origin.Y, ref nextX, hGap, vGap);
+                    break;
+                }
             case "Up":
-            {
-                double nextX = origin.X;
-                ArrangeNodeUp(root, origin.Y + rootSize.Height, ref nextX, hGap, vGap);
-                break;
-            }
+                {
+                    double nextX = origin.X;
+                    ArrangeNodeUp(root, origin.Y + rootSize.Height, ref nextX, hGap, vGap);
+                    break;
+                }
             case "DownLeft":
-            {
-                ArrangeNodeDownLeft(root, origin.X + rootSize.Width, origin.Y, hGap, vGap);
-                break;
-            }
+                {
+                    ArrangeNodeDownLeft(root, origin.X + rootSize.Width, origin.Y, hGap, vGap);
+                    break;
+                }
             case "DownRight":
-            {
-                ArrangeNodeDownRight(root, origin.X, origin.Y, hGap, vGap);
-                break;
-            }
+                {
+                    ArrangeNodeDownRight(root, origin.X, origin.Y, hGap, vGap);
+                    break;
+                }
             case "Radial":
                 ArrangeNodeRadial(root, origin, hGap, vGap);
                 break;
             default:
-            {
-                double nextY = origin.Y;
-                ArrangeNodeRight(root, origin.X, ref nextY, hGap, vGap);
-                break;
-            }
+                {
+                    double nextY = origin.Y;
+                    ArrangeNodeRight(root, origin.X, ref nextY, hGap, vGap);
+                    break;
+                }
         }
     }
 

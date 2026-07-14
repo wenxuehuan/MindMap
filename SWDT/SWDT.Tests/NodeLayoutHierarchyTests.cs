@@ -5,6 +5,41 @@ namespace SWDT.Tests;
 public sealed class NodeLayoutHierarchyTests
 {
     [Fact]
+    public void FindSourceBranchSpan_WhenSourcesAreNested_ReturnsEntireOwningRange()
+    {
+        MindMapNode firstSource = new();
+        MindMapNode secondSource = new();
+        MindMapNode firstBranch = NodeWithChildren(firstSource);
+        MindMapNode secondBranch = new();
+        MindMapNode thirdBranch = NodeWithChildren(secondSource);
+        MindMapNode ancestor = NodeWithChildren(firstBranch, secondBranch, thirdBranch);
+        LinkParents(ancestor);
+
+        LayoutBranchSpan? result = NodeLayoutHierarchy.FindSourceBranchSpan(
+            ancestor,
+            [firstBranch, secondBranch, thirdBranch],
+            [firstSource, secondSource]);
+
+        Assert.Equal(new LayoutBranchSpan(0, 2), result);
+    }
+
+    [Fact]
+    public void FindSourceBranchSpan_WhenNoSourceBelongsToAncestor_ReturnsNull()
+    {
+        MindMapNode branch = new();
+        MindMapNode ancestor = NodeWithChildren(branch);
+        MindMapNode unrelatedSource = new();
+        LinkParents(ancestor);
+
+        LayoutBranchSpan? result = NodeLayoutHierarchy.FindSourceBranchSpan(
+            ancestor,
+            [branch],
+            [unrelatedSource]);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
     public void GetStructuralConnectorStyle_WhenParentIsSummary_UsesChildStyle()
     {
         MindMapNode summary = new() { IsSummary = true };
@@ -70,5 +105,19 @@ public sealed class NodeLayoutHierarchyTests
         List<MindMapNode> result = NodeLayoutHierarchy.TraverseStructuralNodes(root).ToList();
 
         Assert.Equal([root], result);
+    }
+
+    private static MindMapNode NodeWithChildren(params MindMapNode[] children)
+    {
+        return new MindMapNode { Children = [.. children] };
+    }
+
+    private static void LinkParents(MindMapNode node, MindMapNode? parent = null)
+    {
+        node.Parent = parent;
+        foreach (MindMapNode child in node.Children)
+        {
+            LinkParents(child, node);
+        }
     }
 }

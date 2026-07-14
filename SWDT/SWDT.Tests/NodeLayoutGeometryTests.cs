@@ -5,6 +5,60 @@ namespace SWDT.Tests;
 public sealed class NodeLayoutGeometryTests
 {
     [Theory]
+    [InlineData("Right", "Vertical")]
+    [InlineData("Left", "Vertical")]
+    [InlineData("DownRight", "Vertical")]
+    [InlineData("DownLeft", "Vertical")]
+    [InlineData("Down", "Horizontal")]
+    [InlineData("Up", "Horizontal")]
+    public void GetChildGroupAxis_UsesPerpendicularSiblingAxis(
+        string direction,
+        string expectedAxisName)
+    {
+        NodeLayoutAxis expected = Enum.Parse<NodeLayoutAxis>(expectedAxisName);
+
+        Assert.Equal(expected, NodeLayoutGeometry.GetChildGroupAxis(direction));
+    }
+
+    [Theory]
+    [InlineData("Vertical", -15)]
+    [InlineData("Horizontal", 15)]
+    public void GetCenteredChildGroupOffset_UsesFirstAndLastSubtreeCenters(
+        string axisName,
+        double expected)
+    {
+        NodeLayoutAxis axis = Enum.Parse<NodeLayoutAxis>(axisName);
+        NodeLayoutRect firstBounds = axis == NodeLayoutAxis.Vertical
+            ? new NodeLayoutRect(400, 60, 500, 100)
+            : new NodeLayoutRect(50, 400, 90, 500);
+        NodeLayoutRect lastBounds = axis == NodeLayoutAxis.Vertical
+            ? new NodeLayoutRect(400, 200, 500, 260)
+            : new NodeLayoutRect(270, 400, 330, 500);
+
+        double result = NodeLayoutGeometry.GetCenteredChildGroupOffset(
+            new NodeLayoutRect(100, 100, 300, 180),
+            firstBounds,
+            lastBounds,
+            axis);
+
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void GetCenteredChildGroupOffset_WithSingleChild_AlignsCenters()
+    {
+        NodeLayoutRect childBounds = new(400, 180, 500, 220);
+
+        double result = NodeLayoutGeometry.GetCenteredChildGroupOffset(
+            new NodeLayoutRect(100, 100, 300, 180),
+            childBounds,
+            childBounds,
+            NodeLayoutAxis.Vertical);
+
+        Assert.Equal(-60, result);
+    }
+
+    [Theory]
     [InlineData("Right", 370, 100)]
     [InlineData("Left", 30, 100)]
     [InlineData("DownRight", 370, 100)]
@@ -107,20 +161,4 @@ public sealed class NodeLayoutGeometryTests
             12,
             NodeLayoutAxis.Vertical));
     }
-
-    [Fact]
-    public void GetFollowingBranchSeparation_ReservesEntireSummarySubtreeHeight()
-    {
-        NodeLayoutRect summarySubtree = new(400, 100, 900, 520);
-        NodeLayoutRect followingBranch = new(70, 270, 460, 340);
-
-        double result = NodeLayoutGeometry.GetFollowingBranchSeparation(
-            summarySubtree,
-            followingBranch,
-            12,
-            NodeLayoutAxis.Vertical);
-
-        Assert.Equal(262, result);
-    }
-
 }

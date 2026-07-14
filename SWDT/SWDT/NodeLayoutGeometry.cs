@@ -14,6 +14,32 @@ internal readonly record struct NodeLayoutRect(double Left, double Top, double R
 
 internal static class NodeLayoutGeometry
 {
+    public static NodeLayoutAxis GetChildGroupAxis(string direction)
+    {
+        return direction is "Down" or "Up"
+            ? NodeLayoutAxis.Horizontal
+            : NodeLayoutAxis.Vertical;
+    }
+
+    public static double GetCenteredChildGroupOffset(
+        NodeLayoutRect parentRect,
+        NodeLayoutRect firstChildBounds,
+        NodeLayoutRect lastChildBounds,
+        NodeLayoutAxis axis)
+    {
+        double parentCenter = axis == NodeLayoutAxis.Horizontal
+            ? (parentRect.Left + parentRect.Right) / 2
+            : (parentRect.Top + parentRect.Bottom) / 2;
+        double firstChildCenter = axis == NodeLayoutAxis.Horizontal
+            ? (firstChildBounds.Left + firstChildBounds.Right) / 2
+            : (firstChildBounds.Top + firstChildBounds.Bottom) / 2;
+        double lastChildCenter = axis == NodeLayoutAxis.Horizontal
+            ? (lastChildBounds.Left + lastChildBounds.Right) / 2
+            : (lastChildBounds.Top + lastChildBounds.Bottom) / 2;
+
+        return parentCenter - (firstChildCenter + lastChildCenter) / 2;
+    }
+
     public static NodeLayoutOffset GetSummaryChildOrigin(
         string direction,
         NodeLayoutRect summaryRect,
@@ -67,21 +93,6 @@ internal static class NodeLayoutGeometry
         double fixedEnd = axis == NodeLayoutAxis.Horizontal ? fixedRect.Right : fixedRect.Bottom;
         double movingStart = axis == NodeLayoutAxis.Horizontal ? movingRect.Left : movingRect.Top;
         return Math.Max(0, fixedEnd + gap - movingStart);
-    }
-
-    public static double GetFollowingBranchSeparation(
-        NodeLayoutRect summarySubtreeRect,
-        NodeLayoutRect followingBranchRect,
-        double gap,
-        NodeLayoutAxis axis)
-    {
-        double summaryEnd = axis == NodeLayoutAxis.Horizontal
-            ? summarySubtreeRect.Right
-            : summarySubtreeRect.Bottom;
-        double followingStart = axis == NodeLayoutAxis.Horizontal
-            ? followingBranchRect.Left
-            : followingBranchRect.Top;
-        return Math.Max(0, summaryEnd + gap - followingStart);
     }
 
 }
