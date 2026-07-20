@@ -4,6 +4,7 @@ public sealed record DocumentHistoryEntry(
     string RootJson,
     string CanvasSettingsJson,
     string ConnectionsJson,
+    string DocumentMarkdown,
     List<Guid> SelectedNodeIds,
     Guid? SelectedNodeId,
     Guid? SelectedConnectionId,

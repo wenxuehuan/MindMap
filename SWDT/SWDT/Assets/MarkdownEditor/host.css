@@ -1,0 +1,163 @@
+html, body, #editor {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background: transparent;
+  font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+}
+
+.vditor {
+  border: 0 !important;
+  height: 100% !important;
+}
+
+.vditor-toolbar.swdt-hidden-toolbar {
+  display: none !important;
+}
+
+.vditor-ir,
+.vditor-outline,
+.vditor-preview {
+  scrollbar-color: var(--second-color) transparent;
+  scrollbar-width: thin;
+}
+
+.vditor-ir::-webkit-scrollbar,
+.vditor-outline::-webkit-scrollbar,
+.vditor-preview::-webkit-scrollbar {
+  display: block;
+  width: 8px;
+  height: 8px;
+}
+
+.vditor-ir::-webkit-scrollbar-track,
+.vditor-outline::-webkit-scrollbar-track,
+.vditor-preview::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.vditor-ir::-webkit-scrollbar-thumb,
+.vditor-outline::-webkit-scrollbar-thumb,
+.vditor-preview::-webkit-scrollbar-thumb {
+  min-height: 32px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--second-color);
+  background-clip: padding-box;
+}
+
+.vditor-ir::-webkit-scrollbar-thumb:hover,
+.vditor-outline::-webkit-scrollbar-thumb:hover,
+.vditor-preview::-webkit-scrollbar-thumb:hover {
+  background: var(--toolbar-icon-color);
+  background-clip: padding-box;
+}
+
+.vditor-ir::-webkit-scrollbar-button,
+.vditor-outline::-webkit-scrollbar-button,
+.vditor-preview::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.vditor-ir::-webkit-scrollbar-corner,
+.vditor-outline::-webkit-scrollbar-corner,
+.vditor-preview::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.swdt-alignment-marker {
+  display: none !important;
+}
+
+.vditor-outline {
+  width: clamp(160px, 28%, 220px) !important;
+  min-width: 120px;
+  flex-shrink: 0;
+}
+
+.swdt-outline-resizer {
+  position: absolute;
+  z-index: 5;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  margin-left: -4px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.swdt-outline-resizer::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  background: transparent;
+  content: "";
+}
+
+.swdt-outline-resizer:hover::after,
+.swdt-outline-resizer.swdt-active::after {
+  background: var(--toolbar-icon-hover-color);
+}
+
+body.swdt-outline-resizing,
+body.swdt-outline-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+body.swdt-outline-collapsed .vditor-outline,
+body.swdt-outline-collapsed .swdt-outline-resizer {
+  display: none !important;
+}
+
+.vditor-ir {
+  padding: 12px 18px !important;
+}
+
+body.swdt-compact .vditor-ir {
+  padding: 4px 7px !important;
+}
+
+body.swdt-compact .vditor-reset > :first-child {
+  margin-top: 0 !important;
+}
+
+body.swdt-compact .vditor-reset h1,
+body.swdt-compact .vditor-reset h2,
+body.swdt-compact .vditor-reset h3,
+body.swdt-compact .vditor-reset h4,
+body.swdt-compact .vditor-reset h5,
+body.swdt-compact .vditor-reset h6 {
+  margin-top: 0.5em !important;
+  margin-bottom: 0.35em !important;
+}
+
+body.swdt-compact .vditor-reset p {
+  margin-top: 0.35em !important;
+  margin-bottom: 0.35em !important;
+}
+
+.vditor-reset {
+  font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif !important;
+  line-height: 1.72 !important;
+  letter-spacing: 0.28px;
+}
+
+.vditor-reset pre,
+.vditor-reset code,
+.vditor-reset kbd {
+  letter-spacing: normal;
+}
+
+body.swdt-compact .vditor-reset {
+  line-height: 1.62 !important;
+  letter-spacing: 0.18px;
+}

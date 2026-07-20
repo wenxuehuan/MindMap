@@ -26,9 +26,11 @@ public partial class MainWindow : Window
     private const double VerticalGap = 12;
     private const double NodeHorizontalPadding = 22;
     private const double NodeVerticalPadding = 18;
+    private const double NodeNoteButtonReservedWidth = 26;
     private const double NodeFontSize = 14;
     private const double NodeVisibilityMargin = 24;
     private const string DocumentDragFormat = "SWDT.MindMapDocument";
+    private const string WorkspacePaneDragFormat = "SWDT.WorkspacePane";
     private const int MaxRecentFiles = 10;
     private const int MaxHistoryEntries = 100;
     private const double ExportPadding = 48;
@@ -51,6 +53,8 @@ public partial class MainWindow : Window
     private readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
     private Point _tabDragStart;
     private MindMapDocument? _draggedDocument;
+    private Point _workspacePaneDragStart;
+    private WorkspacePaneKind? _workspacePaneDragKind;
     private bool _skipClosePrompt;
     private bool _isMovingDocument;
 
@@ -69,6 +73,7 @@ public partial class MainWindow : Window
     private Guid? _editingNodeId;
     private GridLength _previousRightSidebarWidth = new(300);
     private bool _isRightSidebarCollapsed;
+    private bool _isToolbarCollapsed;
     private bool _hasTextEditUndoSnapshot;
     private Guid? _textEditLayoutNodeId;
     private Size _textEditLayoutBaseSize;
@@ -86,6 +91,19 @@ public partial class MainWindow : Window
     private double _miniMapOffsetY;
     private bool _isDraggingMiniMapViewport;
     private Vector _miniMapDragOffset;
+    private MarkdownEditorHost? _documentMarkdownEditor;
+    private MarkdownEditorHost? _nodeNoteEditor;
+    private MarkdownEditorHost? _activeMarkdownEditor;
+    private MindMapDocument? _markdownBoundDocument;
+    private MindMapNode? _noteBoundNode;
+    private readonly DispatcherTimer _markdownHistoryTimer = new() { Interval = TimeSpan.FromMilliseconds(750) };
+    private bool _hasMarkdownUndoSnapshot;
+    private bool _isApplyingMarkdownState;
+    private bool _isDraggingNodeNote;
+    private Point _nodeNoteDragStart;
+    private Thickness _nodeNoteDragStartMargin;
+    private bool _nodeNoteWasManuallyPositioned;
+    private readonly Dictionary<Guid, Button> _noteButtons = [];
 
     private readonly record struct LayoutBounds(double Top, double Bottom);
 
@@ -142,6 +160,7 @@ public partial class MainWindow : Window
     {
         ApplyLocalization();
         InitializeComponent();
+        InitializeMarkdownEditors();
         ApplyCurrentTheme();
         UpdateLanguageMenuChecks();
         DocumentsTabControl.ItemsSource = _documents;
@@ -157,6 +176,7 @@ public partial class MainWindow : Window
     {
         ApplyLocalization();
         InitializeComponent();
+        InitializeMarkdownEditors();
         ApplyCurrentTheme();
         UpdateLanguageMenuChecks();
         DocumentsTabControl.ItemsSource = _documents;
@@ -166,6 +186,168 @@ public partial class MainWindow : Window
         AddDocument(document);
         UpdateRecentFilesMenu();
         ApplyMiniMapVisibility();
+    }
+
+    private void InitializeMarkdownEditors()
+    {
+        _documentMarkdownEditor = new MarkdownEditorHost();
+        _nodeNoteEditor = new MarkdownEditorHost(compactLayout: true);
+        MarkdownEditorContainer.Children.Add(_documentMarkdownEditor);
+        NodeNoteEditorContainer.Children.Add(_nodeNoteEditor);
+        AttachMarkdownEditor(_documentMarkdownEditor);
+        AttachMarkdownEditor(_nodeNoteEditor);
+        _markdownHistoryTimer.Tick += MarkdownHistoryTimer_Tick;
+    }
+
+    private void AttachMarkdownEditor(MarkdownEditorHost editor)
+    {
+        editor.ContentChanged += MarkdownEditor_ContentChanged;
+        editor.EditorFocusChanged += MarkdownEditor_FocusChanged;
+        editor.AssetCreated += MarkdownEditor_AssetCreated;
+        editor.UndoRequested += (_, _) => UndoCurrentDocument();
+        editor.RedoRequested += (_, _) => RedoCurrentDocument();
+        editor.SaveRequested += (_, _) => SaveDocument(CurrentDocument, forceSaveAs: false);
+        editor.EscapeRequested += (_, _) =>
+        {
+            if (NodeNotePopup.Visibility == Visibility.Visible)
+            {
+                CloseNodeNoteEditor(flush: true);
+            }
+        };
+        editor.InitializationFailed += (_, ex) => StatusText.Text = ex.Message;
+    }
+
+    private void BindMarkdownDocument(MindMapDocument document)
+    {
+        _isApplyingMarkdownState = true;
+        _markdownBoundDocument = document;
+        _documentMarkdownEditor?.LoadContent(
+            document.DocumentMarkdown,
+            document.MarkdownAssets,
+            IsDarkThemeActive(),
+            GetMarkdownLanguage(),
+            Localization.T("MarkdownPlaceholder"));
+        _documentMarkdownEditor?.SetOutlineVisible(document.IsMarkdownOutlineVisible);
+        UpdateMarkdownOutlineButton();
+        CloseNodeNoteEditor(flush: false);
+        _hasMarkdownUndoSnapshot = false;
+        _markdownHistoryTimer.Stop();
+        _isApplyingMarkdownState = false;
+        UpdateWorkspacePaneLayout();
+    }
+
+    private async Task FlushMarkdownEditorsAsync()
+    {
+        if (_documentMarkdownEditor is not null && _markdownBoundDocument is not null)
+        {
+            _markdownBoundDocument.DocumentMarkdown = await _documentMarkdownEditor.FlushAsync();
+        }
+
+        if (_nodeNoteEditor is not null && _noteBoundNode is not null)
+        {
+            _noteBoundNode.NoteMarkdown = await _nodeNoteEditor.FlushAsync();
+        }
+    }
+
+    private void MarkdownEditor_ContentChanged(object? sender, MarkdownContentChangedEventArgs e)
+    {
+        if (_isApplyingMarkdownState || _markdownBoundDocument is null)
+        {
+            return;
+        }
+
+        if (ReferenceEquals(sender, _documentMarkdownEditor))
+        {
+            if (_markdownBoundDocument.DocumentMarkdown == e.Content)
+            {
+                return;
+            }
+
+            BeginMarkdownHistoryGroup(_markdownBoundDocument);
+            _markdownBoundDocument.DocumentMarkdown = e.Content;
+        }
+        else if (ReferenceEquals(sender, _nodeNoteEditor) && _noteBoundNode is not null)
+        {
+            if (_noteBoundNode.NoteMarkdown == e.Content)
+            {
+                return;
+            }
+
+            BeginMarkdownHistoryGroup(_markdownBoundDocument);
+            _noteBoundNode.NoteMarkdown = e.Content;
+            UpdateNoteButtonAppearance(_noteBoundNode);
+        }
+
+        _markdownBoundDocument.MarkDirty();
+        if (ReferenceEquals(_markdownBoundDocument, CurrentDocument))
+        {
+            UpdateCommandState();
+        }
+    }
+
+    private void BeginMarkdownHistoryGroup(MindMapDocument document)
+    {
+        if (!_hasMarkdownUndoSnapshot && ReferenceEquals(document, CurrentDocument))
+        {
+            PushUndoSnapshot();
+            _hasMarkdownUndoSnapshot = true;
+        }
+
+        _markdownHistoryTimer.Stop();
+        _markdownHistoryTimer.Start();
+    }
+
+    private void MarkdownHistoryTimer_Tick(object? sender, EventArgs e)
+    {
+        _markdownHistoryTimer.Stop();
+        _hasMarkdownUndoSnapshot = false;
+    }
+
+    private void MarkdownEditor_FocusChanged(object? sender, MarkdownFocusChangedEventArgs e)
+    {
+        if (!e.IsFocused || sender is not MarkdownEditorHost editor)
+        {
+            return;
+        }
+
+        _activeMarkdownEditor = editor;
+        SetActiveWorkspaceSurface(isMarkdown: true);
+    }
+
+    private void MarkdownEditor_AssetCreated(object? sender, MarkdownAssetCreatedEventArgs e)
+    {
+        if (_markdownBoundDocument is null)
+        {
+            return;
+        }
+
+        BeginMarkdownHistoryGroup(_markdownBoundDocument);
+        _markdownBoundDocument.MarkdownAssets.Add(e.Asset);
+    }
+
+    private void SetActiveWorkspaceSurface(bool isMarkdown)
+    {
+        MindMapToolbarPanel.Visibility = isMarkdown ? Visibility.Collapsed : Visibility.Visible;
+        MarkdownToolbarPanel.Visibility = isMarkdown ? Visibility.Visible : Visibility.Collapsed;
+        ToggleRightSidebarButton.IsEnabled = !isMarkdown && CurrentDocument.IsMindMapPaneOpen;
+    }
+
+    private static string GetMarkdownLanguage()
+    {
+        return Localization.NormalizeLanguage(AppSettings.Language) switch
+        {
+            "zh-CN" => "zh_CN",
+            "zh-TW" => "zh_TW",
+            "ja-JP" => "ja_JP",
+            "ko-KR" => "ko_KR",
+            "fr-FR" => "fr_FR",
+            "de-DE" => "de_DE",
+            "es-ES" => "es_ES",
+            "pt-BR" => "pt_BR",
+            "ru-RU" => "ru_RU",
+            "vi-VN" => "vi_VN",
+            _ => "en_US"
+        };
     }
 
     private static AppSettings LoadAppSettings()
@@ -271,6 +453,8 @@ public partial class MainWindow : Window
         SetThemeBrush(SystemColors.GrayTextBrushKey, dark ? "#64748B" : "#6B7280");
         SetThemeBrush(SystemColors.ActiveBorderBrushKey, dark ? "#334155" : "#D5DCE6");
         UpdateThemeMenuChecks();
+        _documentMarkdownEditor?.SetTheme(dark);
+        _nodeNoteEditor?.SetTheme(dark);
 
         if (_documents.Count > 0)
         {
@@ -315,11 +499,14 @@ public partial class MainWindow : Window
         ApplyLocalization();
         foreach (MainWindow window in OpenWindows)
         {
+            window.UpdateWindowTitle();
             window.UpdateLanguageMenuChecks();
             window.UpdateTree();
             window.UpdateInspector();
             window.UpdateStats();
             window.UpdateRecentFilesMenu();
+            window.UpdateToolbarToggleButton();
+            window.UpdateMarkdownOutlineButton();
         }
     }
 
@@ -382,15 +569,27 @@ public partial class MainWindow : Window
             document.SelectedNodeIds.Add(document.SelectedNode.Id);
         }
 
+        document.PropertyChanged += Document_PropertyChanged;
         _documents.Add(document);
+        UpdateDocumentTabVisibility();
         DocumentsTabControl.SelectedItem = document;
+        UpdateWindowTitle();
         ApplyDocumentView(document);
         RenderCanvas();
     }
 
+    private void UpdateDocumentTabVisibility()
+    {
+        DocumentsTabControl.Visibility = _documents.Count > 1
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
     private void RemoveDocument(MindMapDocument document)
     {
+        document.PropertyChanged -= Document_PropertyChanged;
         _documents.Remove(document);
+        UpdateDocumentTabVisibility();
 
         if (_documents.Count == 0)
         {
@@ -402,15 +601,38 @@ public partial class MainWindow : Window
         DocumentsTabControl.SelectedItem = _documents[^1];
     }
 
-    private void DocumentsTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private async void DocumentsTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (DocumentsTabControl.SelectedItem is not MindMapDocument document)
         {
             return;
         }
 
+        UpdateWindowTitle();
+        await FlushMarkdownEditorsAsync();
+        BindMarkdownDocument(document);
         ApplyDocumentView(document);
         RenderCanvas();
+    }
+
+    private void Document_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (sender is MindMapDocument document &&
+            ReferenceEquals(document, CurrentDocument) &&
+            (string.IsNullOrEmpty(e.PropertyName) || e.PropertyName == nameof(MindMapDocument.DisplayName)))
+        {
+            UpdateWindowTitle();
+        }
+    }
+
+    private void UpdateWindowTitle()
+    {
+        Title = _documents.Count == 0
+            ? Localization.T("AppTitle")
+            : DocumentWindowTitle.Format(
+                CurrentDocument,
+                Localization.T("FileStatusSaved"),
+                Localization.T("FileStatusUnsaved"));
     }
 
     private void ApplyDocumentView(MindMapDocument document)
@@ -432,6 +654,233 @@ public partial class MainWindow : Window
         CurrentDocument.CanvasScale = CanvasScale.ScaleX;
         CurrentDocument.CanvasOffsetX = CanvasTranslate.X;
         CurrentDocument.CanvasOffsetY = CanvasTranslate.Y;
+    }
+
+    private void UpdateWorkspacePaneLayout()
+    {
+        if (_documents.Count == 0)
+        {
+            return;
+        }
+
+        MindMapDocument document = CurrentDocument;
+        if (!document.IsMindMapPaneOpen && !document.IsMarkdownPaneOpen)
+        {
+            document.IsMindMapPaneOpen = true;
+        }
+
+        bool bothOpen = document.IsMindMapPaneOpen && document.IsMarkdownPaneOpen;
+        int mindMapColumn = document.IsMarkdownPaneOnLeft ? 2 : 0;
+        int markdownColumn = document.IsMarkdownPaneOnLeft ? 0 : 2;
+        Grid.SetColumn(MindMapPaneBorder, mindMapColumn);
+        Grid.SetColumn(MarkdownPaneBorder, markdownColumn);
+        MindMapPaneBorder.Visibility = document.IsMindMapPaneOpen ? Visibility.Visible : Visibility.Collapsed;
+        MarkdownPaneBorder.Visibility = document.IsMarkdownPaneOpen ? Visibility.Visible : Visibility.Collapsed;
+        WorkspaceSplitter.Visibility = bothOpen ? Visibility.Visible : Visibility.Collapsed;
+        double mindMapRatio = Math.Clamp(document.MindMapPaneRatio, 0.2, 0.8);
+        bool leftPaneOpen = document.IsMarkdownPaneOnLeft ? document.IsMarkdownPaneOpen : document.IsMindMapPaneOpen;
+        bool rightPaneOpen = document.IsMarkdownPaneOnLeft ? document.IsMindMapPaneOpen : document.IsMarkdownPaneOpen;
+        double leftPaneRatio = document.IsMarkdownPaneOnLeft ? 1 - mindMapRatio : mindMapRatio;
+        MindMapPaneColumn.Width = leftPaneOpen
+            ? new GridLength(bothOpen ? leftPaneRatio : 1, GridUnitType.Star)
+            : new GridLength(0);
+        WorkspaceSplitterColumn.Width = bothOpen ? new GridLength(6) : new GridLength(0);
+        MarkdownPaneColumn.Width = rightPaneOpen
+            ? new GridLength(bothOpen ? 1 - leftPaneRatio : 1, GridUnitType.Star)
+            : new GridLength(0);
+        ShowMindMapPaneMenuItem.IsChecked = document.IsMindMapPaneOpen;
+        ShowMarkdownPaneMenuItem.IsChecked = document.IsMarkdownPaneOpen;
+        CloseMindMapPaneButton.IsEnabled = document.IsMarkdownPaneOpen;
+        CloseMarkdownPaneButton.IsEnabled = document.IsMindMapPaneOpen;
+        ToggleRightSidebarButton.Visibility = document.IsMindMapPaneOpen ? Visibility.Visible : Visibility.Collapsed;
+
+        if (!document.IsMindMapPaneOpen)
+        {
+            if (RightSidebarColumn.ActualWidth > 0)
+            {
+                _previousRightSidebarWidth = new GridLength(RightSidebarColumn.ActualWidth);
+            }
+
+            RightSidebar.Visibility = Visibility.Collapsed;
+            RightSidebarColumn.MinWidth = 0;
+            RightSidebarColumn.Width = new GridLength(0);
+            CloseNodeNoteEditor(flush: true);
+            SetActiveWorkspaceSurface(isMarkdown: true);
+        }
+        else if (!_isRightSidebarCollapsed)
+        {
+            RightSidebar.Visibility = Visibility.Visible;
+            RightSidebarColumn.MinWidth = 260;
+            RightSidebarColumn.Width = _previousRightSidebarWidth.Value > 0 ? _previousRightSidebarWidth : new GridLength(300);
+        }
+    }
+
+    private void CloseMindMapPane_Click(object sender, RoutedEventArgs e)
+    {
+        if (!CurrentDocument.IsMarkdownPaneOpen)
+        {
+            return;
+        }
+
+        CurrentDocument.IsMindMapPaneOpen = false;
+        UpdateWorkspacePaneLayout();
+    }
+
+    private void CloseMarkdownPane_Click(object sender, RoutedEventArgs e)
+    {
+        if (!CurrentDocument.IsMindMapPaneOpen)
+        {
+            return;
+        }
+
+        CurrentDocument.IsMarkdownPaneOpen = false;
+        UpdateWorkspacePaneLayout();
+        SetActiveWorkspaceSurface(isMarkdown: false);
+    }
+
+    private void ToggleMarkdownOutline_Click(object sender, RoutedEventArgs e)
+    {
+        CurrentDocument.IsMarkdownOutlineVisible = !CurrentDocument.IsMarkdownOutlineVisible;
+        _documentMarkdownEditor?.SetOutlineVisible(CurrentDocument.IsMarkdownOutlineVisible);
+        UpdateMarkdownOutlineButton();
+        StatusText.Text = Localization.T(CurrentDocument.IsMarkdownOutlineVisible
+            ? "MarkdownOutlineExpanded"
+            : "MarkdownOutlineCollapsed");
+    }
+
+    private void UpdateMarkdownOutlineButton()
+    {
+        if (_documents.Count == 0 || ToggleMarkdownOutlineButton is null)
+        {
+            return;
+        }
+
+        bool visible = CurrentDocument.IsMarkdownOutlineVisible;
+        string localizationKey = visible ? "HideMarkdownOutline" : "ShowMarkdownOutline";
+        ToggleMarkdownOutlineButton.Content = visible ? "\uE8A0" : "\uE8A1";
+        ToggleMarkdownOutlineButton.ToolTip = Localization.T(localizationKey);
+        System.Windows.Automation.AutomationProperties.SetName(ToggleMarkdownOutlineButton, Localization.T(localizationKey));
+    }
+
+    private void ShowMindMapPaneMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        bool requested = ShowMindMapPaneMenuItem.IsChecked;
+        if (!requested && !CurrentDocument.IsMarkdownPaneOpen)
+        {
+            ShowMindMapPaneMenuItem.IsChecked = true;
+            return;
+        }
+
+        CurrentDocument.IsMindMapPaneOpen = requested;
+        UpdateWorkspacePaneLayout();
+    }
+
+    private void ShowMarkdownPaneMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        bool requested = ShowMarkdownPaneMenuItem.IsChecked;
+        if (!requested && !CurrentDocument.IsMindMapPaneOpen)
+        {
+            ShowMarkdownPaneMenuItem.IsChecked = true;
+            return;
+        }
+
+        CurrentDocument.IsMarkdownPaneOpen = requested;
+        UpdateWorkspacePaneLayout();
+        if (requested)
+        {
+            _documentMarkdownEditor?.FocusEditor();
+        }
+    }
+
+    private void SwapWorkspacePanesMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        CurrentDocument.IsMarkdownPaneOnLeft = !CurrentDocument.IsMarkdownPaneOnLeft;
+        UpdateWorkspacePaneLayout();
+    }
+
+    private void WorkspacePaneHeader_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string paneText } &&
+            Enum.TryParse(paneText, out WorkspacePaneKind paneKind))
+        {
+            _workspacePaneDragStart = e.GetPosition(WorkspaceGrid);
+            _workspacePaneDragKind = paneKind;
+        }
+    }
+
+    private void WorkspacePaneHeader_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        _workspacePaneDragKind = null;
+    }
+
+    private void WorkspacePaneHeader_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (e.LeftButton != MouseButtonState.Pressed || _workspacePaneDragKind is not WorkspacePaneKind paneKind)
+        {
+            return;
+        }
+
+        Point current = e.GetPosition(WorkspaceGrid);
+        if (Math.Abs(current.X - _workspacePaneDragStart.X) < SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(current.Y - _workspacePaneDragStart.Y) < SystemParameters.MinimumVerticalDragDistance)
+        {
+            return;
+        }
+
+        _workspacePaneDragKind = null;
+        DataObject data = new(WorkspacePaneDragFormat, paneKind.ToString());
+        bool originalMarkdownPaneOnLeft = CurrentDocument.IsMarkdownPaneOnLeft;
+        DragDropEffects result = DragDrop.DoDragDrop((DependencyObject)sender, data, DragDropEffects.Move);
+        if (result != DragDropEffects.Move && CurrentDocument.IsMarkdownPaneOnLeft != originalMarkdownPaneOnLeft)
+        {
+            CurrentDocument.IsMarkdownPaneOnLeft = originalMarkdownPaneOnLeft;
+            UpdateWorkspacePaneLayout();
+        }
+    }
+
+    private void WorkspacePane_DragOver(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetData(WorkspacePaneDragFormat) is string paneText &&
+            Enum.TryParse(paneText, out WorkspacePaneKind paneKind))
+        {
+            bool dropOnLeft = e.GetPosition(WorkspaceGrid).X < WorkspaceGrid.ActualWidth / 2;
+            bool markdownPaneOnLeft = WorkspacePaneLayout.GetMarkdownPaneOnLeft(paneKind, dropOnLeft);
+            if (CurrentDocument.IsMarkdownPaneOnLeft != markdownPaneOnLeft)
+            {
+                CurrentDocument.IsMarkdownPaneOnLeft = markdownPaneOnLeft;
+                UpdateWorkspacePaneLayout();
+            }
+
+            e.Effects = DragDropEffects.Move;
+            e.Handled = true;
+        }
+    }
+
+    private void WorkspacePane_Drop(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetData(WorkspacePaneDragFormat) is not string paneText ||
+            !Enum.TryParse(paneText, out WorkspacePaneKind paneKind))
+        {
+            return;
+        }
+
+        bool dropOnLeft = e.GetPosition(WorkspaceGrid).X < WorkspaceGrid.ActualWidth / 2;
+        CurrentDocument.IsMarkdownPaneOnLeft = WorkspacePaneLayout.GetMarkdownPaneOnLeft(paneKind, dropOnLeft);
+        UpdateWorkspacePaneLayout();
+        e.Effects = DragDropEffects.Move;
+        e.Handled = true;
+    }
+
+    private void WorkspaceSplitter_DragCompleted(object sender, System.Windows.Controls.Primitives.DragCompletedEventArgs e)
+    {
+        double total = MindMapPaneColumn.ActualWidth + MarkdownPaneColumn.ActualWidth;
+        if (total > 0)
+        {
+            double mindMapWidth = CurrentDocument.IsMarkdownPaneOnLeft
+                ? MarkdownPaneColumn.ActualWidth
+                : MindMapPaneColumn.ActualWidth;
+            CurrentDocument.MindMapPaneRatio = Math.Clamp(mindMapWidth / total, 0.2, 0.8);
+        }
     }
 
     private void CanvasViewport_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -457,6 +906,7 @@ public partial class MainWindow : Window
             JsonSerializer.Serialize(document.Root, _jsonOptions),
             JsonSerializer.Serialize(document.CanvasSettings, _jsonOptions),
             JsonSerializer.Serialize(document.Connections, _jsonOptions),
+            document.DocumentMarkdown,
             document.SelectedNodeIds.ToList(),
             document.SelectedNode?.Id,
             document.SelectedConnectionId,
@@ -536,6 +986,7 @@ public partial class MainWindow : Window
         document.Root = root;
         document.CanvasSettings = JsonSerializer.Deserialize<CanvasSettings>(entry.CanvasSettingsJson, _jsonOptions) ?? new CanvasSettings();
         document.Connections = JsonSerializer.Deserialize<List<MindMapConnection>>(entry.ConnectionsJson, _jsonOptions) ?? [];
+        document.DocumentMarkdown = entry.DocumentMarkdown;
         NormalizeCanvasSettings(document.CanvasSettings);
         LinkParents(document.Root);
         NormalizeConnections(document);
@@ -582,6 +1033,7 @@ public partial class MainWindow : Window
         NormalizeSummaryReferences();
         ApplyDocumentView(document);
         RenderCanvas();
+        BindMarkdownDocument(document);
         UpdateCommandState();
     }
 
@@ -742,6 +1194,8 @@ public partial class MainWindow : Window
     {
         node.Children ??= [];
         node.SummarySourceIds ??= [];
+        node.NoteMarkdown ??= string.Empty;
+        node.HasNote = node.HasNote || !string.IsNullOrWhiteSpace(node.NoteMarkdown);
         NormalizeNodeStyle(node);
         node.Parent = parent;
 
@@ -808,7 +1262,13 @@ public partial class MainWindow : Window
         MindMapCanvas.Children.Clear();
         _nodeControls.Clear();
         _collapseToggleControls.Clear();
+        _noteButtons.Clear();
         _inlineTitleBox = null;
+
+        if (_noteBoundNode is not null && !TraverseDisplayedNodes().Any(node => node.Id == _noteBoundNode.Id))
+        {
+            CloseNodeNoteEditor(flush: false);
+        }
 
         foreach (MindMapNode root in VisibleRoots)
         {
@@ -827,6 +1287,7 @@ public partial class MainWindow : Window
         UpdateInspector();
         UpdateStats();
         UpdateMiniMapContent();
+        UpdateNodeNotePopupPosition();
     }
 
     private void ApplyCanvasAppearance()
@@ -839,6 +1300,7 @@ public partial class MainWindow : Window
         {
             CanvasBackground.Fill = background;
             UpdateMiniMapViewport();
+            UpdateNodeNotePopupPosition();
             return;
         }
 
@@ -859,6 +1321,7 @@ public partial class MainWindow : Window
         };
 
         UpdateMiniMapViewport();
+        UpdateNodeNotePopupPosition();
     }
 
     private static double PositiveModulo(double value, double divisor)
@@ -1359,6 +1822,27 @@ public partial class MainWindow : Window
         Size nodeSize = MeasureNodeSize(node);
         bool canInlineEdit = isSelected && _selectedNodeIds.Count <= 1 && _editingNodeId == node.Id;
         FrameworkElement titleControl = canInlineEdit ? CreateInlineTitleBox(node, nodeSize) : CreateNodeTitleBlock(node, nodeSize);
+        Grid nodeContent = new();
+        nodeContent.Children.Add(titleControl);
+        Button noteButton = new()
+        {
+            Width = 22,
+            Height = 22,
+            Padding = new Thickness(0),
+            Margin = new Thickness(0, 2, 2, 0),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Top,
+            Content = "\uE70B",
+            FontFamily = new FontFamily("Segoe MDL2 Assets"),
+            FontSize = 12,
+            Tag = node.Id,
+            ToolTip = Localization.T("EditNodeNote"),
+            Visibility = node.HasNote ? Visibility.Visible : Visibility.Collapsed
+        };
+        noteButton.SetResourceReference(FrameworkElement.StyleProperty, "ToolbarIconButtonStyle");
+        noteButton.Click += NodeNoteButton_Click;
+        nodeContent.Children.Add(noteButton);
+
         Border border = new()
         {
             Width = nodeSize.Width,
@@ -1368,11 +1852,27 @@ public partial class MainWindow : Window
             BorderBrush = GetNodeBorderBrush(isSelected, isMultiSelected, node),
             BorderThickness = new Thickness(isSelected || isMultiSelected ? Math.Max(2, node.BorderThickness) : node.BorderThickness),
             Cursor = Cursors.Hand,
-            Child = titleControl
+            Child = nodeContent
         };
 
         border.PreviewMouseLeftButtonDown += Node_MouseLeftButtonDown;
         border.Tag = node.Id;
+        MenuItem editNoteItem = new()
+        {
+            Header = Localization.T(node.HasNote ? "EditNodeNote" : "AddNodeNote"),
+            Tag = node.Id
+        };
+        editNoteItem.Click += AddOrEditNodeNoteMenuItem_Click;
+        ContextMenu nodeMenu = new() { Items = { editNoteItem } };
+        if (node.HasNote)
+        {
+            MenuItem deleteNoteItem = new() { Header = Localization.T("DeleteNodeNote"), Tag = node.Id };
+            deleteNoteItem.Click += DeleteNodeNoteMenuItem_Click;
+            nodeMenu.Items.Add(new Separator());
+            nodeMenu.Items.Add(deleteNoteItem);
+        }
+
+        border.ContextMenu = nodeMenu;
 
         Canvas.SetLeft(border, node.X);
         Canvas.SetTop(border, node.Y);
@@ -1384,6 +1884,7 @@ public partial class MainWindow : Window
 
         MindMapCanvas.Children.Add(border);
         _nodeControls[node.Id] = border;
+        _noteButtons[node.Id] = noteButton;
 
         if (node.Children.Count > 0)
         {
@@ -1518,7 +2019,7 @@ public partial class MainWindow : Window
 
     private TextBlock CreateNodeTitleBlock(MindMapNode node, Size nodeSize)
     {
-        double contentWidth = GetNodeContentWidth(nodeSize);
+        double contentWidth = GetNodeTitleContentWidth(node, nodeSize);
         return new TextBlock
         {
             Text = node.Title,
@@ -1531,15 +2032,15 @@ public partial class MainWindow : Window
             Foreground = CreateBrush(node.TextColor, Color.FromRgb(15, 23, 42)),
             TextWrapping = TextWrapping.Wrap,
             VerticalAlignment = VerticalAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Left,
             TextAlignment = GetNodeTextAlignment(node),
-            Margin = new Thickness(NodeHorizontalPadding / 2, 0, NodeHorizontalPadding / 2, 0)
+            Margin = new Thickness(NodeHorizontalPadding / 2, 0, NodeHorizontalPadding / 2 + GetNodeNoteReservedWidth(node), 0)
         };
     }
 
     private TextBox CreateInlineTitleBox(MindMapNode node, Size nodeSize)
     {
-        double contentWidth = GetNodeContentWidth(nodeSize);
+        double contentWidth = GetNodeTitleContentWidth(node, nodeSize);
         TextBox editor = new()
         {
             Text = node.Title,
@@ -1553,11 +2054,12 @@ public partial class MainWindow : Window
             Background = Brushes.Transparent,
             BorderThickness = new Thickness(0),
             Padding = new Thickness(0),
-            Margin = new Thickness(NodeHorizontalPadding / 2, 0, NodeHorizontalPadding / 2, 0),
+            Margin = new Thickness(NodeHorizontalPadding / 2, 0, NodeHorizontalPadding / 2 + GetNodeNoteReservedWidth(node), 0),
             TextWrapping = TextWrapping.Wrap,
             AcceptsReturn = false,
             VerticalContentAlignment = VerticalAlignment.Center,
-            HorizontalContentAlignment = HorizontalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
             TextAlignment = GetNodeTextAlignment(node),
             Tag = node.Id
         };
@@ -1572,6 +2074,12 @@ public partial class MainWindow : Window
 
     private void Node_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        if (FindVisualAncestor<Button>(e.OriginalSource as DependencyObject) is not null)
+        {
+            return;
+        }
+
+        SetActiveWorkspaceSurface(isMarkdown: false);
         if (sender is not Border border || border.Tag is not Guid nodeId)
         {
             return;
@@ -1672,6 +2180,13 @@ public partial class MainWindow : Window
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        // WebView2 editor focus is reported by the JavaScript bridge rather than WPF's
+        // Keyboard.FocusedElement. Let Vditor handle caret movement and editing keys.
+        if (IsMarkdownEditorKeyboardFocusActive())
+        {
+            return;
+        }
+
         bool isControlDown = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
         bool isShiftDown = (Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift;
         if (isControlDown && e.Key == Key.Z)
@@ -1798,6 +2313,12 @@ public partial class MainWindow : Window
         }
     }
 
+    private bool IsMarkdownEditorKeyboardFocusActive()
+    {
+        return _documentMarkdownEditor?.IsEditorFocused == true ||
+            _nodeNoteEditor?.IsEditorFocused == true;
+    }
+
     private void MoveNodeSelection(Key direction)
     {
         if (_selectedNode is null)
@@ -1900,6 +2421,7 @@ public partial class MainWindow : Window
 
     private void MindMapCanvas_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        SetActiveWorkspaceSurface(isMarkdown: false);
         CanvasViewport.Focus();
         if (!ReferenceEquals(e.OriginalSource, CanvasViewport))
         {
@@ -1948,6 +2470,7 @@ public partial class MainWindow : Window
 
     private void MindMapCanvas_MouseRightButtonDown(object sender, MouseButtonEventArgs e)
     {
+        SetActiveWorkspaceSurface(isMarkdown: false);
         if (!ReferenceEquals(e.OriginalSource, CanvasViewport))
         {
             return;
@@ -1963,8 +2486,11 @@ public partial class MainWindow : Window
 
     private void MindMapCanvas_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
     {
-        EndCanvasPan();
-        e.Handled = true;
+        if (_isPanning)
+        {
+            EndCanvasPan();
+            e.Handled = true;
+        }
     }
 
     private void MindMapCanvas_MouseMove(object sender, MouseEventArgs e)
@@ -2761,7 +3287,9 @@ public partial class MainWindow : Window
             {
                 FilePath = fullPath,
                 CanvasSettings = loadedFile.CanvasSettings,
-                Connections = loadedFile.Connections
+                Connections = loadedFile.Connections,
+                DocumentMarkdown = loadedFile.DocumentMarkdown,
+                MarkdownAssets = loadedFile.MarkdownAssets
             };
             document.MarkClean();
             AddDocument(document);
@@ -2838,11 +3366,17 @@ public partial class MainWindow : Window
         try
         {
             NormalizeCanvasSettings(document.CanvasSettings);
+            List<MarkdownAsset> referencedAssets = MarkdownAssetReferences.GetReferencedAssets(
+                document.MarkdownAssets,
+                MarkdownAssetReferences.EnumerateDocumentMarkdown(document));
             string json = JsonSerializer.Serialize(new MindMapFile
             {
+                FormatVersion = MindMapFile.CurrentFormatVersion,
                 Root = document.Root,
                 CanvasSettings = document.CanvasSettings,
-                Connections = document.Connections
+                Connections = document.Connections,
+                DocumentMarkdown = document.DocumentMarkdown,
+                MarkdownAssets = referencedAssets
             }, _jsonOptions);
             File.WriteAllText(filePath, json);
             document.FilePath = IOPath.GetFullPath(filePath);
@@ -3560,11 +4094,26 @@ public partial class MainWindow : Window
 
     private MindMapFile DeserializeMindMapFile(string json)
     {
+        try
+        {
+            MindMapFileVersion.ReadAndValidate(json);
+        }
+        catch (UnsupportedMindMapFileVersionException ex)
+        {
+            throw new InvalidOperationException(string.Format(
+                CultureInfo.CurrentCulture,
+                Localization.T("UnsupportedFileVersion"),
+                ex.Version,
+                MindMapFile.CurrentFormatVersion), ex);
+        }
+
         MindMapFile? file = JsonSerializer.Deserialize<MindMapFile>(json, _jsonOptions);
         if (file?.Root is not null)
         {
             file.CanvasSettings ??= new CanvasSettings();
             file.Connections ??= [];
+            file.DocumentMarkdown ??= string.Empty;
+            file.MarkdownAssets ??= [];
             NormalizeCanvasSettings(file.CanvasSettings);
             file.Root = EnsureCanvasRoot(file.Root, file.CanvasSettings);
             NormalizeConnections(file.Root, file.Connections);
@@ -3581,7 +4130,9 @@ public partial class MainWindow : Window
         {
             Root = EnsureCanvasRoot(legacyRoot, new CanvasSettings()),
             CanvasSettings = new CanvasSettings(),
-            Connections = []
+            Connections = [],
+            DocumentMarkdown = string.Empty,
+            MarkdownAssets = []
         };
     }
 
@@ -3850,7 +4401,392 @@ public partial class MainWindow : Window
 
     private void MainWindow_Closed(object? sender, EventArgs e)
     {
+        _markdownHistoryTimer.Stop();
+        _documentMarkdownEditor?.Dispose();
+        _nodeNoteEditor?.Dispose();
         OpenWindows.Remove(this);
+    }
+
+    private async void NodeNoteButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: Guid id })
+        {
+            MindMapNode? node = TraverseVisibleNodes().FirstOrDefault(candidate => candidate.Id == id);
+            if (node is not null)
+            {
+                await OpenNodeNoteEditorAsync(node);
+            }
+        }
+
+        e.Handled = true;
+    }
+
+    private async void AddOrEditNodeNoteMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem { Tag: Guid id })
+        {
+            MindMapNode? node = TraverseVisibleNodes().FirstOrDefault(candidate => candidate.Id == id);
+            if (node is not null)
+            {
+                if (!node.HasNote)
+                {
+                    Size oldSize = MeasureNodeSize(node);
+                    PushUndoSnapshot();
+                    node.HasNote = true;
+                    ApplyNodeSizeChangeLayout(node, oldSize, MeasureNodeSize(node));
+                    MarkCurrentDocumentDirty();
+                    RenderCanvas();
+                }
+
+                await OpenNodeNoteEditorAsync(node);
+            }
+        }
+    }
+
+    private void DeleteNodeNoteMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { Tag: Guid id })
+        {
+            return;
+        }
+
+        MindMapNode? node = TraverseVisibleNodes().FirstOrDefault(candidate => candidate.Id == id);
+        if (node is null || !node.HasNote || MessageBox.Show(
+                this,
+                Localization.T("DeleteNodeNotePrompt"),
+                Localization.T("DeleteNodeNote"),
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        Size oldSize = MeasureNodeSize(node);
+        PushUndoSnapshot();
+        if (ReferenceEquals(_noteBoundNode, node))
+        {
+            CloseNodeNoteEditor(flush: false);
+        }
+
+        node.HasNote = false;
+        node.NoteMarkdown = string.Empty;
+        ApplyNodeSizeChangeLayout(node, oldSize, MeasureNodeSize(node));
+        MarkCurrentDocumentDirty();
+        RenderCanvas();
+    }
+
+    private async Task OpenNodeNoteEditorAsync(MindMapNode node)
+    {
+        if (!node.HasNote)
+        {
+            return;
+        }
+
+        if (_noteBoundNode is not null && _nodeNoteEditor is not null)
+        {
+            _noteBoundNode.NoteMarkdown = await _nodeNoteEditor.FlushAsync();
+        }
+
+        _noteBoundNode = node;
+        _nodeNoteWasManuallyPositioned = false;
+        NodeNoteTitle.Text = $"{Localization.T("NodeNote")} · {node.Title}";
+        NodeNotePopup.Visibility = Visibility.Visible;
+        _nodeNoteEditor?.LoadContent(
+            node.NoteMarkdown,
+            CurrentDocument.MarkdownAssets,
+            IsDarkThemeActive(),
+            GetMarkdownLanguage(),
+            Localization.T("NodeNotePlaceholder"));
+        UpdateNodeNotePopupPosition(force: true);
+        _activeMarkdownEditor = _nodeNoteEditor;
+        SetActiveWorkspaceSurface(isMarkdown: true);
+        _nodeNoteEditor?.FocusEditor();
+    }
+
+    private void CloseNodeNote_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        CloseNodeNoteEditor(flush: true);
+        e.Handled = true;
+    }
+
+    private void CloseNodeNote_Click(object sender, RoutedEventArgs e)
+    {
+        CloseNodeNoteEditor(flush: true);
+        e.Handled = true;
+    }
+
+    private void CloseNodeNoteEditor(bool flush)
+    {
+        MindMapNode? node = _noteBoundNode;
+        Task<string>? flushTask = flush && node is not null && _nodeNoteEditor is not null
+            ? _nodeNoteEditor.FlushAsync()
+            : null;
+
+        NodeNotePopup.Visibility = Visibility.Collapsed;
+        _noteBoundNode = null;
+        _nodeNoteWasManuallyPositioned = false;
+        if (ReferenceEquals(_activeMarkdownEditor, _nodeNoteEditor))
+        {
+            _activeMarkdownEditor = CurrentDocument.IsMarkdownPaneOpen ? _documentMarkdownEditor : null;
+        }
+
+        if (node is not null && flushTask is not null)
+        {
+            _ = FlushClosedNodeNoteAsync(node, flushTask);
+        }
+    }
+
+    private static async Task FlushClosedNodeNoteAsync(MindMapNode node, Task<string> flushTask)
+    {
+        string markdown = await flushTask;
+        if (node.HasNote)
+        {
+            node.NoteMarkdown = markdown;
+        }
+    }
+
+    private void UpdateNoteButtonAppearance(MindMapNode node)
+    {
+        if (!_noteButtons.TryGetValue(node.Id, out Button? button))
+        {
+            return;
+        }
+
+        string brushKey = string.IsNullOrWhiteSpace(node.NoteMarkdown) ? "TextMutedBrush" : "AccentBrush";
+        button.SetResourceReference(Control.ForegroundProperty, brushKey);
+        button.Visibility = node.HasNote ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void UpdateNodeNotePopupPosition(bool force = false)
+    {
+        if (NodeNotePopup.Visibility != Visibility.Visible || _noteBoundNode is null)
+        {
+            return;
+        }
+
+        double viewportWidth = Math.Max(1, CanvasViewport.ActualWidth);
+        double viewportHeight = Math.Max(1, CanvasViewport.ActualHeight);
+        if (viewportWidth >= NodeNotePopup.MinWidth)
+        {
+            NodeNotePopup.Width = Math.Min(NodeNotePopup.Width, viewportWidth);
+        }
+
+        if (viewportHeight >= NodeNotePopup.MinHeight)
+        {
+            NodeNotePopup.Height = Math.Min(NodeNotePopup.Height, viewportHeight);
+        }
+
+        if (_nodeNoteWasManuallyPositioned && !force)
+        {
+            double constrainedLeft = Math.Clamp(NodeNotePopup.Margin.Left, 0, Math.Max(0, viewportWidth - NodeNotePopup.Width));
+            double constrainedTop = Math.Clamp(NodeNotePopup.Margin.Top, 0, Math.Max(0, viewportHeight - NodeNotePopup.Height));
+            NodeNotePopup.Margin = new Thickness(constrainedLeft, constrainedTop, 0, 0);
+            return;
+        }
+
+        Size nodeSize = MeasureNodeSize(_noteBoundNode);
+        double scale = CanvasScale.ScaleX;
+        double nodeLeft = _noteBoundNode.X * scale + CanvasTranslate.X;
+        double nodeTop = _noteBoundNode.Y * scale + CanvasTranslate.Y;
+        double left = nodeLeft + nodeSize.Width * scale + 12;
+        double top = nodeTop;
+        if (left + NodeNotePopup.Width > viewportWidth)
+        {
+            left = nodeLeft - NodeNotePopup.Width - 12;
+        }
+
+        left = Math.Clamp(left, 0, Math.Max(0, viewportWidth - NodeNotePopup.Width));
+        top = Math.Clamp(top, 0, Math.Max(0, viewportHeight - NodeNotePopup.Height));
+        NodeNotePopup.Margin = new Thickness(left, top, 0, 0);
+    }
+
+    private void NodeNoteHeader_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (FindVisualAncestor<Button>(e.OriginalSource as DependencyObject) is not null)
+        {
+            return;
+        }
+
+        _isDraggingNodeNote = true;
+        _nodeNoteDragStart = e.GetPosition(CanvasViewport);
+        _nodeNoteDragStartMargin = NodeNotePopup.Margin;
+        ((UIElement)sender).CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void NodeNoteHeader_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_isDraggingNodeNote || e.LeftButton != MouseButtonState.Pressed)
+        {
+            return;
+        }
+
+        Point current = e.GetPosition(CanvasViewport);
+        double left = _nodeNoteDragStartMargin.Left + current.X - _nodeNoteDragStart.X;
+        double top = _nodeNoteDragStartMargin.Top + current.Y - _nodeNoteDragStart.Y;
+        left = Math.Clamp(left, 0, Math.Max(0, CanvasViewport.ActualWidth - NodeNotePopup.ActualWidth));
+        top = Math.Clamp(top, 0, Math.Max(0, CanvasViewport.ActualHeight - NodeNotePopup.ActualHeight));
+        NodeNotePopup.Margin = new Thickness(left, top, 0, 0);
+        _nodeNoteWasManuallyPositioned = true;
+        e.Handled = true;
+    }
+
+    private void NodeNoteHeader_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        _isDraggingNodeNote = false;
+        ((UIElement)sender).ReleaseMouseCapture();
+        e.Handled = true;
+    }
+
+    private void NodeNoteResizeThumb_DragDelta(object sender, System.Windows.Controls.Primitives.DragDeltaEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Primitives.Thumb { Tag: string edgeText } ||
+            !Enum.TryParse(edgeText, out NotePopupResizeEdge edges))
+        {
+            return;
+        }
+
+        NotePopupBounds resized = NotePopupResizeGeometry.Resize(
+            new NotePopupBounds(NodeNotePopup.Margin.Left, NodeNotePopup.Margin.Top, NodeNotePopup.Width, NodeNotePopup.Height),
+            edges,
+            e.HorizontalChange,
+            e.VerticalChange,
+            CanvasViewport.ActualWidth,
+            CanvasViewport.ActualHeight,
+            NodeNotePopup.MinWidth,
+            NodeNotePopup.MinHeight);
+        NodeNotePopup.Margin = new Thickness(resized.Left, resized.Top, 0, 0);
+        NodeNotePopup.Width = resized.Width;
+        NodeNotePopup.Height = resized.Height;
+        _nodeNoteWasManuallyPositioned = true;
+    }
+
+    private void MarkdownToolbarButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string commandText } && Enum.TryParse(commandText, out MarkdownCommand command))
+        {
+            MarkdownEditorHost? editor = _activeMarkdownEditor ?? _documentMarkdownEditor;
+            if (command == MarkdownCommand.Image)
+            {
+                InsertMarkdownImage(editor);
+                return;
+            }
+
+            editor?.ExecuteCommand(command);
+            editor?.FocusEditor();
+        }
+    }
+
+    private void InsertMarkdownImage(MarkdownEditorHost? editor)
+    {
+        if (editor is null)
+        {
+            return;
+        }
+
+        OpenFileDialog dialog = new()
+        {
+            Filter = Localization.T("MarkdownImageFileFilter"),
+            Multiselect = true
+        };
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        foreach (string filePath in dialog.FileNames)
+        {
+            try
+            {
+                BeginMarkdownHistoryGroup(CurrentDocument);
+                MarkdownAsset asset = MarkdownFileInterop.CreateAssetFromFile(filePath);
+                CurrentDocument.MarkdownAssets.Add(asset);
+                editor.InsertAsset(asset);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, ex.Message, Localization.T("MarkdownImage"), MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        editor.FocusEditor();
+    }
+
+    private async void ImportMarkdown_Click(object sender, RoutedEventArgs e)
+    {
+        await FlushMarkdownEditorsAsync();
+        if (!string.IsNullOrWhiteSpace(CurrentDocument.DocumentMarkdown) &&
+            MessageBox.Show(this, Localization.T("ReplaceMarkdownConfirm"), Localization.T("ImportMarkdown"), MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        OpenFileDialog dialog = new() { Filter = Localization.T("MarkdownFileFilter") };
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            MarkdownImportResult result = MarkdownFileInterop.Import(dialog.FileName);
+            PushUndoSnapshot();
+            CurrentDocument.MarkdownAssets.AddRange(result.ImportedAssets);
+            CurrentDocument.DocumentMarkdown = result.Markdown;
+            CurrentDocument.MarkDirty();
+            CurrentDocument.IsMarkdownPaneOpen = true;
+            UpdateWorkspacePaneLayout();
+            _documentMarkdownEditor?.LoadContent(result.Markdown, CurrentDocument.MarkdownAssets, IsDarkThemeActive(), GetMarkdownLanguage(), Localization.T("MarkdownPlaceholder"));
+            if (result.MissingFiles.Count > 0)
+            {
+                MessageBox.Show(this, string.Format(CultureInfo.CurrentCulture, Localization.T("MarkdownMissingImages"), string.Join(Environment.NewLine, result.MissingFiles)), Localization.T("ImportMarkdown"), MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+
+            StatusText.Text = string.Format(CultureInfo.CurrentCulture, Localization.T("MarkdownImported"), IOPath.GetFileName(dialog.FileName));
+            UpdateCommandState();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, Localization.T("MarkdownImportFailed"), MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private async void ExportMarkdown_Click(object sender, RoutedEventArgs e)
+    {
+        await FlushMarkdownEditorsAsync();
+        bool exportNote = ReferenceEquals(_activeMarkdownEditor, _nodeNoteEditor) && _noteBoundNode is not null;
+        string markdown = exportNote ? _noteBoundNode!.NoteMarkdown : CurrentDocument.DocumentMarkdown;
+        string baseName = exportNote
+            ? SanitizeDefaultFileName(_noteBoundNode!.Title)
+            : IOPath.GetFileNameWithoutExtension(CurrentDocument.FilePath ?? CurrentDocument.UntitledName);
+        SaveFileDialog dialog = new()
+        {
+            Filter = Localization.T("MarkdownFileFilter"),
+            DefaultExt = "md",
+            AddExtension = true,
+            FileName = $"{baseName}.md"
+        };
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            MarkdownFileInterop.Export(dialog.FileName, markdown, CurrentDocument.MarkdownAssets);
+            StatusText.Text = string.Format(CultureInfo.CurrentCulture, Localization.T("MarkdownExported"), IOPath.GetFileName(dialog.FileName));
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, Localization.T("MarkdownExportFailed"), MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private static string SanitizeDefaultFileName(string value)
+    {
+        char[] invalid = IOPath.GetInvalidFileNameChars();
+        string result = new(value.Select(character => invalid.Contains(character) ? '_' : character).ToArray());
+        return string.IsNullOrWhiteSpace(result) ? "note" : result;
     }
 
     private void AutoLayout_Click(object sender, RoutedEventArgs e)
@@ -3975,6 +4911,22 @@ public partial class MainWindow : Window
         System.Windows.Automation.AutomationProperties.SetName(ToggleRightSidebarButton, Localization.T("ShowSidebar"));
         _isRightSidebarCollapsed = true;
         StatusText.Text = Localization.T("SidebarCollapsed");
+    }
+
+    private void ToggleToolbar_Click(object sender, RoutedEventArgs e)
+    {
+        _isToolbarCollapsed = !_isToolbarCollapsed;
+        MainToolbarBorder.Visibility = _isToolbarCollapsed ? Visibility.Collapsed : Visibility.Visible;
+        UpdateToolbarToggleButton();
+        StatusText.Text = Localization.T(_isToolbarCollapsed ? "ToolbarCollapsed" : "ToolbarExpanded");
+    }
+
+    private void UpdateToolbarToggleButton()
+    {
+        string localizationKey = _isToolbarCollapsed ? "ExpandToolbar" : "CollapseToolbar";
+        ToggleToolbarButton.Content = _isToolbarCollapsed ? "\uE70D" : "\uE70E";
+        ToggleToolbarButton.ToolTip = Localization.T(localizationKey);
+        System.Windows.Automation.AutomationProperties.SetName(ToggleToolbarButton, Localization.T(localizationKey));
     }
 
     private void SelectNode(MindMapNode node, bool focusTitle = false)
@@ -4275,7 +5227,7 @@ public partial class MainWindow : Window
                 border.Height = size.Height;
                 Canvas.SetLeft(border, node.X);
                 Canvas.SetTop(border, node.Y);
-                ApplyTitleControlWidth(border, size);
+                ApplyTitleControlWidth(border, node, size);
             }
 
             if (_collapseToggleControls.TryGetValue(node.Id, out Button? toggle))
@@ -5435,21 +6387,29 @@ public partial class MainWindow : Window
         }
     }
 
-    private static double GetNodeContentWidth(Size nodeSize)
+    private static double GetNodeNoteReservedWidth(MindMapNode node)
     {
-        return Math.Max(0, nodeSize.Width - NodeHorizontalPadding);
+        return node.HasNote ? NodeNoteButtonReservedWidth : 0;
     }
 
-    private static void ApplyTitleControlWidth(Border border, Size nodeSize)
+    private static double GetNodeTitleContentWidth(MindMapNode node, Size nodeSize)
     {
-        if (border.Child is not FrameworkElement titleControl)
+        return Math.Max(0, nodeSize.Width - NodeHorizontalPadding - GetNodeNoteReservedWidth(node));
+    }
+
+    private static void ApplyTitleControlWidth(Border border, MindMapNode node, Size nodeSize)
+    {
+        if (border.Child is not Grid nodeContent)
         {
             return;
         }
 
-        double contentWidth = GetNodeContentWidth(nodeSize);
-        titleControl.Width = contentWidth;
-        titleControl.MaxWidth = contentWidth;
+        double contentWidth = GetNodeTitleContentWidth(node, nodeSize);
+        foreach (FrameworkElement titleControl in nodeContent.Children.OfType<FrameworkElement>().Where(child => child is not Button))
+        {
+            titleControl.Width = contentWidth;
+            titleControl.MaxWidth = contentWidth;
+        }
     }
 
     private static double GetConnectorBend(Point start, Point end)
@@ -5668,7 +6628,8 @@ public partial class MainWindow : Window
     private Size MeasureNodeSize(MindMapNode node)
     {
         string title = string.IsNullOrWhiteSpace(node.Title) ? Localization.T("Untitled") : node.Title.Trim();
-        double textMaxWidth = MaxNodeWidth - NodeHorizontalPadding;
+        double noteReservedWidth = GetNodeNoteReservedWidth(node);
+        double textMaxWidth = MaxNodeWidth - NodeHorizontalPadding - noteReservedWidth;
         FormattedText formattedText = new(
             title,
             CultureInfo.CurrentUICulture,
@@ -5681,7 +6642,7 @@ public partial class MainWindow : Window
             MaxTextWidth = textMaxWidth
         };
 
-        double width = Math.Clamp(formattedText.WidthIncludingTrailingWhitespace + NodeHorizontalPadding, MinNodeWidth, MaxNodeWidth);
+        double width = Math.Clamp(formattedText.WidthIncludingTrailingWhitespace + NodeHorizontalPadding + noteReservedWidth, MinNodeWidth, MaxNodeWidth);
         double height = Math.Max(MinNodeHeight, formattedText.Height + NodeVerticalPadding);
         return new Size(Math.Ceiling(width), Math.Ceiling(height));
     }

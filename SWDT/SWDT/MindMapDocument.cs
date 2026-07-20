@@ -23,6 +23,20 @@ public sealed class MindMapDocument : INotifyPropertyChanged
 
     public List<MindMapConnection> Connections { get; set; } = [];
 
+    public string DocumentMarkdown { get; set; } = string.Empty;
+
+    public List<MarkdownAsset> MarkdownAssets { get; set; } = [];
+
+    public bool IsMindMapPaneOpen { get; set; } = true;
+
+    public bool IsMarkdownPaneOpen { get; set; } = true;
+
+    public double MindMapPaneRatio { get; set; } = 0.5;
+
+    public bool IsMarkdownPaneOnLeft { get; set; } = true;
+
+    public bool IsMarkdownOutlineVisible { get; set; }
+
     public string UntitledName { get; }
 
     public string? FilePath

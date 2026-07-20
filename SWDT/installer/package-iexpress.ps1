@@ -8,12 +8,21 @@ $setupExe = Join-Path $outputDir "SWDT-Setup-win-x64.exe"
 $sedPath = Join-Path $outputDir "SWDT-Setup.sed"
 
 $publishedExe = Join-Path $publishDir "SWDT.exe"
+$webViewBootstrapper = Join-Path $outputDir "MicrosoftEdgeWebView2Setup.exe"
 if (-not (Test-Path -LiteralPath $publishedExe)) {
     throw "Published executable not found. Run dotnet publish first: $publishedExe"
 }
 
 New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+if (-not (Test-Path -LiteralPath $webViewBootstrapper)) {
+    Invoke-WebRequest `
+        -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" `
+        -OutFile $webViewBootstrapper `
+        -UseBasicParsing
+}
+
 Copy-Item -LiteralPath $publishedExe -Destination (Join-Path $packageDir "SWDT.exe") -Force
+Copy-Item -LiteralPath $webViewBootstrapper -Destination (Join-Path $packageDir "MicrosoftEdgeWebView2Setup.exe") -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "install.cmd") -Destination (Join-Path $packageDir "install.cmd") -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "install.ps1") -Destination (Join-Path $packageDir "install.ps1") -Force
 
@@ -50,6 +59,7 @@ SourceFiles0=$packageDirWithSlash
 
 [SourceFiles0]
 SWDT.exe=
+MicrosoftEdgeWebView2Setup.exe=
 install.cmd=
 install.ps1=
 "@

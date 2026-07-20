@@ -54,6 +54,10 @@ public sealed class MindMapNode
 
     public bool IsCollapsed { get; set; }
 
+    public bool HasNote { get; set; }
+
+    public string NoteMarkdown { get; set; } = string.Empty;
+
     public List<Guid> SummarySourceIds { get; set; } = [];
 
     public List<MindMapNode> Children { get; set; } = [];

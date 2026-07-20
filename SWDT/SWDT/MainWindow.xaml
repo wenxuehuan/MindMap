@@ -109,14 +109,39 @@
         </Style>
 
         <Style x:Key="ToolbarIconButtonStyle" TargetType="Button" BasedOn="{StaticResource ToolbarButtonStyle}">
-            <Setter Property="Width" Value="34" />
-            <Setter Property="Height" Value="30" />
-            <Setter Property="MinWidth" Value="34" />
+            <Setter Property="Width" Value="30" />
+            <Setter Property="Height" Value="28" />
+            <Setter Property="MinWidth" Value="30" />
             <Setter Property="Padding" Value="0" />
-            <Setter Property="Margin" Value="0,0,4,0" />
+            <Setter Property="Margin" Value="0,0,2,0" />
             <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
-            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontSize" Value="13" />
         </Style>
+
+        <Style x:Key="MarkdownToolbarIconStyle" TargetType="Path">
+            <Setter Property="Width" Value="16" />
+            <Setter Property="Height" Value="16" />
+            <Setter Property="Stretch" Value="Uniform" />
+            <Setter Property="Fill" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+        </Style>
+
+        <!-- Vditor 3.11.2 Material icons, kept local so Markdown commands never depend on a font glyph or CDN. -->
+        <StreamGeometry x:Key="MarkdownHeadingIcon">M1.050 0.007h6.279v31.993h-6.279v-31.993z M24.671 0h6.279v31.993h-6.279v-31.993z M5.159 12.845h21.683v6.317h-21.683v-6.317z</StreamGeometry>
+        <StreamGeometry x:Key="MarkdownBoldIcon">M18.569 26.328q1.498 0 2.462-1.017t0.963-2.408-0.963-2.408-2.462-1.017h-8.027v6.849h8.027z M10.542 5.779v6.85h6.85q1.391 0 2.408-1.017t1.017-2.408-1.017-2.408-2.408-1.017h-6.849z M23.385 15.518q4.923 2.248 4.923 7.813 0 3.639-2.408 6.154t-6.047 2.515h-16.161v-32h14.341q3.853 0 6.475 2.676t2.622 6.528-3.746 6.314z</StreamGeometry>
+        <StreamGeometry x:Key="MarkdownItalicIcon">M11.398 0h18.301v6.849h-6.421l-7.706 18.301h5.030v6.849h-18.301v-6.849h6.421l7.706-18.301h-5.030v-6.849z</StreamGeometry>
+        <StreamGeometry x:Key="MarkdownStrikeIcon">M12.444 29.333h7.111v-5.333h-7.111v5.333z M3.556 2.667v5.333h8.889v5.333h7.111v-5.333h8.889v-5.333h-24.889z M0 20.444h32v-3.556h-32v3.556z</StreamGeometry>
+        <StreamGeometry x:Key="MarkdownQuoteIcon">M27.769 26.667h-9.316l3.556-7.111h-4.231v-14.222h14.222v12.871l-4.231 8.462z M24.213 23.111h1.351l2.88-5.76v-8.462h-7.111v7.111h6.436l-3.556 7.111z M9.991 26.667h-9.316l3.556-7.111h-4.231v-14.222h14.222v12.871l-4.231 8.462z M6.436 23.111h1.351l2.88-5.76v-8.462h-7.111v7.111h6.436l-3.556 7.111z</StreamGeometry>
+        <StreamGeometry x:Key="MarkdownAlignLeftIcon">M2 4h28v3H2z M2 11h19v3H2z M2 18h28v3H2z M2 25h16v3H2z</StreamGeometry>
+        <StreamGeometry x:Key="MarkdownAlignCenterIcon">M2 4h28v3H2z M7 11h18v3H7z M2 18h28v3H2z M8 25h16v3H8z</StreamGeometry>
+        <StreamGeometry x:Key="MarkdownAlignRightIcon">M2 4h28v3H2z M11 11h19v3H11z M2 18h28v3H2z M14 25h16v3H14z</StreamGeometry>
+        <StreamGeometry x:Key="MarkdownUnorderedListIcon">M7.777 3.929h24.223v3.403h-24.223v-3.403z M7.777 17.701v-3.403h24.223v3.403h-24.223z M7.777 28.071v-3.403h24.223v3.403h-24.223z M2.592 23.777q1.053 0 1.823 0.77t0.77 1.823-0.77 1.823-1.823 0.77-1.823-0.77-0.77-1.823 0.77-1.823 1.823-0.77z M2.592 3.038q1.053 0 1.823 0.729t0.77 1.863-0.77 1.863-1.823 0.729-1.823-0.729-0.77-1.863 0.77-1.863 1.823-0.729z M2.592 13.408q1.053 0 1.823 0.729t0.77 1.863-0.77 1.863-1.823 0.729-1.823-0.729-0.77-1.863 0.77-1.863 1.823-0.729z</StreamGeometry>
+        <StreamGeometry x:Key="MarkdownOrderedListIcon">M8.375 17.659v-3.319h23.625v3.319h-23.625z M8.375 27.773v-3.319h23.625v3.319h-23.625z M8.375 4.227h23.625v3.319h-23.625v-3.319z M0 14.341v-1.738h5.057v1.58l-3.081 3.477h3.081v1.738h-5.057v-1.58l3.002-3.477h-3.002z M1.659 9.284v-5.057h-1.659v-1.738h3.319v6.795h-1.659z M0 24.454v-1.738h5.057v6.795h-5.057v-1.738h3.319v-0.79h-1.659v-1.738h1.659v-0.79h-3.319z</StreamGeometry>
+        <StreamGeometry x:Key="MarkdownTaskListIcon">M28.444 0h-24.889c-1.956 0-3.556 1.6-3.556 3.556v24.889c0 1.956 1.6 3.556 3.556 3.556h24.889c1.956 0 3.556-1.6 3.556-3.556v-24.889c0-1.956-1.6-3.556-3.556-3.556z M28.444 28.445h-24.889v-24.889h24.889v24.889z M26.649 10.667l-2.507-2.524-11.716 11.716-4.587-4.569-2.524 2.507 7.111 7.093z</StreamGeometry>
+        <StreamGeometry x:Key="MarkdownInlineCodeIcon">M11.84 23.36l-7.36-7.36 7.36-7.36-2.24-2.24-9.6 9.6 9.6 9.6 2.24-2.24z M20.16 23.36l7.36-7.36-7.36-7.36 2.24-2.24 9.6 9.6-9.6 9.6-2.24-2.24z</StreamGeometry>
+        <StreamGeometry x:Key="MarkdownCodeBlockIcon">M9.946 8.501l-2.204-1.832-7.742 9.331 7.742 9.331 2.204-1.832-6.225-7.499 6.225-7.499z M8.844 17.431h2.862v-2.862h-2.862v2.862z M23.156 14.569h-2.862v2.862h2.862v-2.862z M14.569 17.431h2.862v-2.862h-2.862v2.862z M24.258 6.669l-2.204 1.832 6.225 7.499-6.225 7.499 2.204 1.832 7.742-9.331-7.742-9.331z</StreamGeometry>
+        <StreamGeometry x:Key="MarkdownLinkIcon">M24.038 7.962q3.305 0 5.634 2.366t2.329 5.671-2.329 5.671-5.634 2.366h-6.46v-3.080h6.46q2.028 0 3.493-1.465t1.465-3.493-1.465-3.493-3.493-1.465h-6.46v-3.080h6.46z M9.615 17.577v-3.155h12.77v3.155h-12.77z M3.005 16q0 2.028 1.465 3.493t3.493 1.465h6.46v3.080h-6.46q-3.305 0-5.634-2.366t-2.329-5.671 2.329-5.671 5.634-2.366h6.46v3.080h-6.46q-2.028 0-3.493 1.465t-1.465 3.493z</StreamGeometry>
+        <StreamGeometry x:Key="MarkdownImageIcon">M25.8 13.387c-0.907-4.6-4.947-8.053-9.8-8.053-3.853 0-7.2 2.187-8.867 5.387-4.013 0.427-7.133 3.827-7.133 7.947 0 4.413 3.587 8 8 8h17.333c3.68 0 6.667-2.987 6.667-6.667 0-3.52-2.733-6.373-6.2-6.613z M25.333 24h-17.333c-2.947 0-5.333-2.387-5.333-5.333 0-2.733 2.040-5.013 4.747-5.293l1.427-0.147 0.667-1.267c1.267-2.44 3.747-3.96 6.493-3.96 3.493 0 6.507 2.48 7.187 5.907l0.4 2 2.040 0.147c2.080 0.133 3.707 1.88 3.707 3.947 0 2.2-1.8 4-4 4z M10.667 17.333h3.4v4h3.867v-4h3.4l-5.333-5.333z</StreamGeometry>
+        <StreamGeometry x:Key="MarkdownTableIcon">M22.801 2.286h-22.801v27.429h32v-27.429h-9.199z M19.372 5.714v4.571h-6.801v-4.571h6.801z M19.372 13.714v4.571h-6.801v-4.571h6.801z M3.429 5.714h5.714v4.571h-5.714v-4.571z M3.429 13.714h5.714v4.571h-5.714v-4.571z M3.429 26.286v-4.571h5.714v4.571h-5.714z M12.571 26.286v-4.571h6.801v4.571h-6.801z M28.571 26.286h-5.77v-4.571h5.77v4.571z M28.571 18.286h-5.77v-4.571h5.77v4.571z M22.801 10.286v-4.571h5.77v4.571h-5.77z</StreamGeometry>
 
         <Style x:Key="MenuIconStyle" TargetType="TextBlock">
             <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
@@ -154,8 +179,8 @@
         </Style>
 
         <Style x:Key="TabCloseButtonStyle" TargetType="Button">
-            <Setter Property="Width" Value="22" />
-            <Setter Property="Height" Value="20" />
+            <Setter Property="Width" Value="20" />
+            <Setter Property="Height" Value="18" />
             <Setter Property="Padding" Value="0" />
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderBrush" Value="Transparent" />
@@ -178,6 +203,12 @@
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+        </Style>
+
+        <Style x:Key="NodeNoteCloseButtonStyle" TargetType="Button" BasedOn="{StaticResource TabCloseButtonStyle}">
+            <Setter Property="Width" Value="18" />
+            <Setter Property="Height" Value="18" />
+            <Setter Property="FontSize" Value="11" />
         </Style>
 
         <Style x:Key="DocumentTabControlStyle" TargetType="TabControl">
@@ -208,17 +239,17 @@
                     <ControlTemplate TargetType="TabItem">
                         <Grid>
                             <Border x:Name="TopAccent"
-                                    Height="3"
+                                    Height="2"
                                     VerticalAlignment="Top"
                                     Background="Transparent"
                                     CornerRadius="3,3,0,0" />
                             <Border x:Name="TabChrome"
-                                    Margin="0,2,0,0"
+                                    Margin="0,1,0,0"
                                     Background="{DynamicResource TabBackgroundBrush}"
                                     BorderBrush="{DynamicResource PanelBorderBrush}"
                                     BorderThickness="1,1,1,0"
                                     CornerRadius="3,3,0,0"
-                                    Padding="11,6,9,6">
+                                    Padding="9,3,7,3">
                                 <ContentPresenter ContentSource="Header"
                                                   TextElement.Foreground="{DynamicResource TextPrimaryBrush}" />
                             </Border>
@@ -254,6 +285,18 @@
                     <Setter Property="Opacity" Value="1" />
                 </Trigger>
             </Style.Triggers>
+        </Style>
+
+        <Style x:Key="NodeNoteResizeThumbStyle" TargetType="Thumb">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Thumb">
+                        <Border Background="Transparent" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
         <Style TargetType="ComboBox">
@@ -539,8 +582,21 @@
     </Window.Resources>
 
     <DockPanel>
-        <DockPanel DockPanel.Dock="Top" Background="{DynamicResource TopBarBackgroundBrush}">
-            <Menu DockPanel.Dock="Top" Background="{DynamicResource TopBarBackgroundBrush}" Foreground="{DynamicResource TextPrimaryBrush}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="0,0,0,1" Padding="4,0">
+        <Border DockPanel.Dock="Top"
+                Height="30"
+                Background="{DynamicResource TopBarBackgroundBrush}"
+                BorderBrush="{DynamicResource PanelBorderBrush}"
+                BorderThickness="0,0,0,1">
+            <DockPanel LastChildFill="True">
+                <Button x:Name="ToggleToolbarButton"
+                        DockPanel.Dock="Right"
+                        Content="&#xE70E;"
+                        Margin="0,0,4,0"
+                        ToolTip="{DynamicResource CollapseToolbar}"
+                        AutomationProperties.Name="{DynamicResource CollapseToolbar}"
+                        Click="ToggleToolbar_Click"
+                        Style="{StaticResource ToolbarIconButtonStyle}" />
+                <Menu Background="{DynamicResource TopBarBackgroundBrush}" Foreground="{DynamicResource TextPrimaryBrush}" BorderThickness="0" Padding="4,0">
                 <MenuItem Header="{DynamicResource MenuFile}">
                     <MenuItem Header="{DynamicResource New}" Click="NewMap_Click">
                         <MenuItem.Icon><TextBlock Style="{StaticResource MenuIconStyle}" Text="&#xE710;" /></MenuItem.Icon>
@@ -586,6 +642,10 @@
                     </MenuItem>
                 </MenuItem>
                 <MenuItem Header="{DynamicResource MenuView}">
+                    <MenuItem x:Name="ShowMindMapPaneMenuItem" Header="{DynamicResource ShowMindMapPane}" IsCheckable="True" IsChecked="True" Click="ShowMindMapPaneMenuItem_Click" />
+                    <MenuItem x:Name="ShowMarkdownPaneMenuItem" Header="{DynamicResource ShowMarkdownPane}" IsCheckable="True" IsChecked="True" Click="ShowMarkdownPaneMenuItem_Click" />
+                    <MenuItem Header="{DynamicResource SwapWorkspacePanes}" Click="SwapWorkspacePanesMenuItem_Click" />
+                    <Separator />
                     <MenuItem Header="{DynamicResource AutoLayout}" Click="AutoLayout_Click">
                         <MenuItem.Icon><TextBlock Style="{StaticResource MenuIconStyle}" Text="&#xE8A9;" /></MenuItem.Icon>
                     </MenuItem>
@@ -637,9 +697,11 @@
                         <MenuItem.Icon><TextBlock Style="{StaticResource MenuIconStyle}" Text="&#xE74D;" /></MenuItem.Icon>
                     </MenuItem>
                 </MenuItem>
-            </Menu>
+                </Menu>
+            </DockPanel>
+        </Border>
 
-            <Border DockPanel.Dock="Top" Background="{DynamicResource ToolbarBackgroundBrush}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="0,0,0,1" Padding="8,5">
+        <Border x:Name="MainToolbarBorder" DockPanel.Dock="Top" Height="32" Background="{DynamicResource ToolbarBackgroundBrush}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="0,0,0,1" Padding="6,2">
                 <DockPanel LastChildFill="False">
                     <Button x:Name="ToggleRightSidebarButton"
                             DockPanel.Dock="Right"
@@ -653,25 +715,82 @@
                         <Button Content="&#xE8E5;" ToolTip="{DynamicResource Open}" AutomationProperties.Name="{DynamicResource Open}" Click="OpenMap_Click" Style="{StaticResource ToolbarIconButtonStyle}" />
                         <Button Content="&#xE74E;" ToolTip="{DynamicResource Save}" AutomationProperties.Name="{DynamicResource Save}" Click="SaveMap_Click" Style="{StaticResource ToolbarIconButtonStyle}" />
                         <Button Content="&#xE792;" ToolTip="{DynamicResource SaveAs}" AutomationProperties.Name="{DynamicResource SaveAs}" Click="SaveMapAs_Click" Style="{StaticResource ToolbarIconButtonStyle}" />
-                        <Button Content="&#xE8B5;" ToolTip="{DynamicResource ExportImage}" AutomationProperties.Name="{DynamicResource ExportImage}" Click="ExportImage_Click" Style="{StaticResource ToolbarIconButtonStyle}" />
                         <Button Content="&#xE838;" ToolTip="{DynamicResource ShowInExplorer}" AutomationProperties.Name="{DynamicResource ShowInExplorer}" Click="ShowCurrentFileInExplorer_Click" Style="{StaticResource ToolbarIconButtonStyle}" />
-                        <Border Width="1" Height="22" Background="{DynamicResource PanelBorderBrush}" Margin="4,4,8,4" />
+                        <Border Width="1" Height="18" Background="{DynamicResource PanelBorderBrush}" Margin="3,5,5,5" />
                         <Button x:Name="UndoToolbarButton" Content="&#xE7A7;" ToolTip="{DynamicResource Undo}" AutomationProperties.Name="{DynamicResource Undo}" Click="Undo_Click" Style="{StaticResource ToolbarIconButtonStyle}" />
                         <Button x:Name="RedoToolbarButton" Content="&#xE7A6;" ToolTip="{DynamicResource Redo}" AutomationProperties.Name="{DynamicResource Redo}" Click="Redo_Click" Style="{StaticResource ToolbarIconButtonStyle}" />
-                        <Border Width="1" Height="22" Background="{DynamicResource PanelBorderBrush}" Margin="4,4,8,4" />
-                        <Button Content="&#xE710;" ToolTip="{DynamicResource AddRoot}" AutomationProperties.Name="{DynamicResource AddRoot}" Click="AddRoot_Click" Style="{StaticResource ToolbarIconButtonStyle}" />
-                        <Button Content="&#xECC8;" ToolTip="{DynamicResource AddChildShortcut}" AutomationProperties.Name="{DynamicResource AddChild}" Click="AddChild_Click" Style="{StaticResource ToolbarIconButtonStyle}" />
-                        <Button Content="&#xE8B0;" ToolTip="{DynamicResource AddSiblingShortcut}" AutomationProperties.Name="{DynamicResource AddSibling}" Click="AddSibling_Click" Style="{StaticResource ToolbarIconButtonStyle}" />
-                        <Button x:Name="AddSummaryToolbarButton" Content="&#xE9D2;" ToolTip="{DynamicResource AddSummary}" AutomationProperties.Name="{DynamicResource AddSummary}" Click="AddSummary_Click" Style="{StaticResource ToolbarIconButtonStyle}" />
-                        <Button x:Name="AddConnectionToolbarButton" Content="&#xE71B;" ToolTip="{DynamicResource AddConnection}" AutomationProperties.Name="{DynamicResource AddConnection}" Click="AddConnection_Click" Style="{StaticResource ToolbarIconButtonStyle}" />
-                        <Button Content="&#xE74D;" ToolTip="{DynamicResource DeleteNode}" AutomationProperties.Name="{DynamicResource DeleteNode}" Click="DeleteNode_Click" Style="{StaticResource ToolbarIconButtonStyle}" />
-                        <Border Width="1" Height="22" Background="{DynamicResource PanelBorderBrush}" Margin="4,4,8,4" />
-                        <Button Content="&#xE8A9;" ToolTip="{DynamicResource AutoLayout}" AutomationProperties.Name="{DynamicResource AutoLayout}" Click="AutoLayout_Click" Style="{StaticResource ToolbarIconButtonStyle}" />
-                        <Button Content="&#xE72C;" ToolTip="{DynamicResource ResetView}" AutomationProperties.Name="{DynamicResource ResetView}" Click="ResetView_Click" Style="{StaticResource ToolbarIconButtonStyle}" />
+                        <StackPanel x:Name="MindMapToolbarPanel" Orientation="Horizontal">
+                            <Border Width="1" Height="18" Background="{DynamicResource PanelBorderBrush}" Margin="3,5,5,5" />
+                            <Button Content="&#xE710;" ToolTip="{DynamicResource AddRoot}" AutomationProperties.Name="{DynamicResource AddRoot}" Click="AddRoot_Click" Style="{StaticResource ToolbarIconButtonStyle}" />
+                            <Button Content="&#xECC8;" ToolTip="{DynamicResource AddChildShortcut}" AutomationProperties.Name="{DynamicResource AddChild}" Click="AddChild_Click" Style="{StaticResource ToolbarIconButtonStyle}" />
+                            <Button Content="&#xE8B0;" ToolTip="{DynamicResource AddSiblingShortcut}" AutomationProperties.Name="{DynamicResource AddSibling}" Click="AddSibling_Click" Style="{StaticResource ToolbarIconButtonStyle}" />
+                            <Button x:Name="AddSummaryToolbarButton" Content="&#xE9D2;" ToolTip="{DynamicResource AddSummary}" AutomationProperties.Name="{DynamicResource AddSummary}" Click="AddSummary_Click" Style="{StaticResource ToolbarIconButtonStyle}" />
+                            <Button x:Name="AddConnectionToolbarButton" Content="&#xE71B;" ToolTip="{DynamicResource AddConnection}" AutomationProperties.Name="{DynamicResource AddConnection}" Click="AddConnection_Click" Style="{StaticResource ToolbarIconButtonStyle}" />
+                            <Button Content="&#xE74D;" ToolTip="{DynamicResource DeleteNode}" AutomationProperties.Name="{DynamicResource DeleteNode}" Click="DeleteNode_Click" Style="{StaticResource ToolbarIconButtonStyle}" />
+                            <Border Width="1" Height="18" Background="{DynamicResource PanelBorderBrush}" Margin="3,5,5,5" />
+                            <Button Content="&#xE8B5;" ToolTip="{DynamicResource ExportImage}" AutomationProperties.Name="{DynamicResource ExportImage}" Click="ExportImage_Click" Style="{StaticResource ToolbarIconButtonStyle}" />
+                            <Button Content="&#xE8A9;" ToolTip="{DynamicResource AutoLayout}" AutomationProperties.Name="{DynamicResource AutoLayout}" Click="AutoLayout_Click" Style="{StaticResource ToolbarIconButtonStyle}" />
+                            <Button Content="&#xE72C;" ToolTip="{DynamicResource ResetView}" AutomationProperties.Name="{DynamicResource ResetView}" Click="ResetView_Click" Style="{StaticResource ToolbarIconButtonStyle}" />
+                        </StackPanel>
+                        <StackPanel x:Name="MarkdownToolbarPanel" Orientation="Horizontal" Visibility="Collapsed">
+                            <Border Width="1" Height="18" Background="{DynamicResource PanelBorderBrush}" Margin="3,5,5,5" />
+                            <Button ToolTip="{DynamicResource MarkdownHeading}" AutomationProperties.Name="{DynamicResource MarkdownHeading}" Tag="Heading" Click="MarkdownToolbarButton_Click" Style="{StaticResource ToolbarIconButtonStyle}">
+                                <Path Data="{StaticResource MarkdownHeadingIcon}" Style="{StaticResource MarkdownToolbarIconStyle}" />
+                            </Button>
+                            <Button ToolTip="{DynamicResource MarkdownBold}" AutomationProperties.Name="{DynamicResource MarkdownBold}" Tag="Bold" Click="MarkdownToolbarButton_Click" Style="{StaticResource ToolbarIconButtonStyle}">
+                                <Path Data="{StaticResource MarkdownBoldIcon}" Style="{StaticResource MarkdownToolbarIconStyle}" />
+                            </Button>
+                            <Button ToolTip="{DynamicResource MarkdownItalic}" AutomationProperties.Name="{DynamicResource MarkdownItalic}" Tag="Italic" Click="MarkdownToolbarButton_Click" Style="{StaticResource ToolbarIconButtonStyle}">
+                                <Path Data="{StaticResource MarkdownItalicIcon}" Style="{StaticResource MarkdownToolbarIconStyle}" />
+                            </Button>
+                            <Button ToolTip="{DynamicResource MarkdownStrike}" AutomationProperties.Name="{DynamicResource MarkdownStrike}" Tag="Strike" Click="MarkdownToolbarButton_Click" Style="{StaticResource ToolbarIconButtonStyle}">
+                                <Path Data="{StaticResource MarkdownStrikeIcon}" Style="{StaticResource MarkdownToolbarIconStyle}" />
+                            </Button>
+                            <Button ToolTip="{DynamicResource MarkdownQuote}" AutomationProperties.Name="{DynamicResource MarkdownQuote}" Tag="Quote" Click="MarkdownToolbarButton_Click" Style="{StaticResource ToolbarIconButtonStyle}">
+                                <Path Data="{StaticResource MarkdownQuoteIcon}" Style="{StaticResource MarkdownToolbarIconStyle}" />
+                            </Button>
+                            <Border Width="1" Height="18" Background="{DynamicResource PanelBorderBrush}" Margin="3,5,5,5" />
+                            <Button ToolTip="{DynamicResource MarkdownAlignLeft}" AutomationProperties.Name="{DynamicResource MarkdownAlignLeft}" Tag="AlignLeft" Click="MarkdownToolbarButton_Click" Style="{StaticResource ToolbarIconButtonStyle}">
+                                <Path Data="{StaticResource MarkdownAlignLeftIcon}" Style="{StaticResource MarkdownToolbarIconStyle}" />
+                            </Button>
+                            <Button ToolTip="{DynamicResource MarkdownAlignCenter}" AutomationProperties.Name="{DynamicResource MarkdownAlignCenter}" Tag="AlignCenter" Click="MarkdownToolbarButton_Click" Style="{StaticResource ToolbarIconButtonStyle}">
+                                <Path Data="{StaticResource MarkdownAlignCenterIcon}" Style="{StaticResource MarkdownToolbarIconStyle}" />
+                            </Button>
+                            <Button ToolTip="{DynamicResource MarkdownAlignRight}" AutomationProperties.Name="{DynamicResource MarkdownAlignRight}" Tag="AlignRight" Click="MarkdownToolbarButton_Click" Style="{StaticResource ToolbarIconButtonStyle}">
+                                <Path Data="{StaticResource MarkdownAlignRightIcon}" Style="{StaticResource MarkdownToolbarIconStyle}" />
+                            </Button>
+                            <Border Width="1" Height="18" Background="{DynamicResource PanelBorderBrush}" Margin="3,5,5,5" />
+                            <Button ToolTip="{DynamicResource MarkdownUnorderedList}" AutomationProperties.Name="{DynamicResource MarkdownUnorderedList}" Tag="UnorderedList" Click="MarkdownToolbarButton_Click" Style="{StaticResource ToolbarIconButtonStyle}">
+                                <Path Data="{StaticResource MarkdownUnorderedListIcon}" Style="{StaticResource MarkdownToolbarIconStyle}" />
+                            </Button>
+                            <Button ToolTip="{DynamicResource MarkdownOrderedList}" AutomationProperties.Name="{DynamicResource MarkdownOrderedList}" Tag="OrderedList" Click="MarkdownToolbarButton_Click" Style="{StaticResource ToolbarIconButtonStyle}">
+                                <Path Data="{StaticResource MarkdownOrderedListIcon}" Style="{StaticResource MarkdownToolbarIconStyle}" />
+                            </Button>
+                            <Button ToolTip="{DynamicResource MarkdownTaskList}" AutomationProperties.Name="{DynamicResource MarkdownTaskList}" Tag="TaskList" Click="MarkdownToolbarButton_Click" Style="{StaticResource ToolbarIconButtonStyle}">
+                                <Path Data="{StaticResource MarkdownTaskListIcon}" Style="{StaticResource MarkdownToolbarIconStyle}" />
+                            </Button>
+                            <Button ToolTip="{DynamicResource MarkdownInlineCode}" AutomationProperties.Name="{DynamicResource MarkdownInlineCode}" Tag="InlineCode" Click="MarkdownToolbarButton_Click" Style="{StaticResource ToolbarIconButtonStyle}">
+                                <Path Data="{StaticResource MarkdownInlineCodeIcon}" Style="{StaticResource MarkdownToolbarIconStyle}" />
+                            </Button>
+                            <Button ToolTip="{DynamicResource MarkdownCodeBlock}" AutomationProperties.Name="{DynamicResource MarkdownCodeBlock}" Tag="CodeBlock" Click="MarkdownToolbarButton_Click" Style="{StaticResource ToolbarIconButtonStyle}">
+                                <Path Data="{StaticResource MarkdownCodeBlockIcon}" Style="{StaticResource MarkdownToolbarIconStyle}" />
+                            </Button>
+                            <Button ToolTip="{DynamicResource MarkdownLink}" AutomationProperties.Name="{DynamicResource MarkdownLink}" Tag="Link" Click="MarkdownToolbarButton_Click" Style="{StaticResource ToolbarIconButtonStyle}">
+                                <Path Data="{StaticResource MarkdownLinkIcon}" Style="{StaticResource MarkdownToolbarIconStyle}" />
+                            </Button>
+                            <Button ToolTip="{DynamicResource MarkdownImage}" AutomationProperties.Name="{DynamicResource MarkdownImage}" Tag="Image" Click="MarkdownToolbarButton_Click" Style="{StaticResource ToolbarIconButtonStyle}">
+                                <Path Data="{StaticResource MarkdownImageIcon}" Style="{StaticResource MarkdownToolbarIconStyle}" />
+                            </Button>
+                            <Button ToolTip="{DynamicResource MarkdownTable}" AutomationProperties.Name="{DynamicResource MarkdownTable}" Tag="Table" Click="MarkdownToolbarButton_Click" Style="{StaticResource ToolbarIconButtonStyle}">
+                                <Path Data="{StaticResource MarkdownTableIcon}" Style="{StaticResource MarkdownToolbarIconStyle}" />
+                            </Button>
+                            <Border Width="1" Height="18" Background="{DynamicResource PanelBorderBrush}" Margin="3,5,5,5" />
+                            <Button Content="&#xE8B5;" ToolTip="{DynamicResource ImportMarkdown}" AutomationProperties.Name="{DynamicResource ImportMarkdown}" Click="ImportMarkdown_Click" Style="{StaticResource ToolbarIconButtonStyle}" />
+                            <Button Content="&#xEDE1;" ToolTip="{DynamicResource ExportMarkdown}" AutomationProperties.Name="{DynamicResource ExportMarkdown}" Click="ExportMarkdown_Click" Style="{StaticResource ToolbarIconButtonStyle}" />
+                        </StackPanel>
                     </StackPanel>
                 </DockPanel>
-            </Border>
-        </DockPanel>
+        </Border>
 
         <StatusBar DockPanel.Dock="Bottom" Background="{DynamicResource TopBarBackgroundBrush}" Foreground="{DynamicResource TextPrimaryBrush}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1,0,0,0" Padding="8,2">
             <TextBlock x:Name="StatusText" Text="{DynamicResource Ready}" />
@@ -718,7 +837,7 @@
                                 <Button DockPanel.Dock="Right"
                                         Content="×"
                                         Style="{StaticResource TabCloseButtonStyle}"
-                                        Margin="8,0,0,0"
+                                        Margin="6,0,0,0"
                                         Tag="{Binding}"
                                         Click="CloseTab_Click" />
                                 <TextBlock Text="{Binding DisplayName}"
@@ -731,9 +850,57 @@
                     </TabControl.ItemTemplate>
                 </TabControl>
 
-                <Border Grid.Row="1" Background="{DynamicResource ControlBackgroundBrush}" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1"
-                        CornerRadius="0,4,4,4" ClipToBounds="True">
+                <Grid x:Name="WorkspaceGrid"
+                      Grid.Row="1"
+                      AllowDrop="True"
+                      DragOver="WorkspacePane_DragOver"
+                      Drop="WorkspacePane_Drop">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition x:Name="MindMapPaneColumn" Width="*" MinWidth="0" />
+                        <ColumnDefinition x:Name="WorkspaceSplitterColumn" Width="6" />
+                        <ColumnDefinition x:Name="MarkdownPaneColumn" Width="*" MinWidth="0" />
+                    </Grid.ColumnDefinitions>
+                    <Border x:Name="MindMapPaneBorder" Grid.Column="0" Background="{DynamicResource ControlBackgroundBrush}" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1"
+                            CornerRadius="0,4,4,4" ClipToBounds="True">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="26" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <Border Grid.Row="0" Background="{DynamicResource ToolbarBackgroundBrush}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="0,0,0,1" Padding="4,0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="22" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="22" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border Grid.Column="1"
+                                            Background="Transparent"
+                                            Cursor="SizeAll"
+                                            Tag="MindMap"
+                                            ToolTip="{DynamicResource DragPaneToReorder}"
+                                            AllowDrop="True"
+                                            PreviewMouseLeftButtonDown="WorkspacePaneHeader_PreviewMouseLeftButtonDown"
+                                            PreviewMouseLeftButtonUp="WorkspacePaneHeader_PreviewMouseLeftButtonUp"
+                                            MouseMove="WorkspacePaneHeader_MouseMove"
+                                            DragOver="WorkspacePane_DragOver"
+                                            Drop="WorkspacePane_Drop">
+                                        <TextBlock Text="{DynamicResource MindMapPaneTitle}"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource TextPrimaryBrush}"
+                                                   FontWeight="SemiBold" />
+                                    </Border>
+                                    <Button x:Name="CloseMindMapPaneButton"
+                                            Grid.Column="2"
+                                            Content="×"
+                                            Style="{StaticResource TabCloseButtonStyle}"
+                                            Click="CloseMindMapPane_Click"
+                                            ToolTip="{DynamicResource CloseMindMapPane}" />
+                                </Grid>
+                            </Border>
                     <Grid x:Name="CanvasViewport"
+                          Grid.Row="1"
                           Background="#FFFFFF"
                           Focusable="True"
                           SizeChanged="CanvasViewport_SizeChanged"
@@ -805,8 +972,141 @@
                                         Click="HideMiniMapButton_Click" />
                             </Grid>
                         </Border>
+                        <Border x:Name="NodeNotePopup"
+                                Width="400"
+                                Height="280"
+                                MinWidth="360"
+                                MinHeight="240"
+                                Visibility="Collapsed"
+                                HorizontalAlignment="Left"
+                                VerticalAlignment="Top"
+                                Panel.ZIndex="60"
+                                Background="{DynamicResource ControlBackgroundBrush}"
+                                BorderBrush="{DynamicResource AccentBrush}"
+                                BorderThickness="1"
+                                CornerRadius="7"
+                                ClipToBounds="True">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="6" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="6" />
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="6" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="6" />
+                                </Grid.ColumnDefinitions>
+                                <Grid Grid.Row="1" Grid.Column="1">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="24" />
+                                        <RowDefinition Height="*" />
+                                    </Grid.RowDefinitions>
+                                    <Border Grid.Row="0"
+                                            Background="{DynamicResource ToolbarBackgroundBrush}"
+                                            BorderBrush="{DynamicResource PanelBorderBrush}"
+                                            BorderThickness="0,0,0,1"
+                                            Padding="6,0,1,0">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="18" />
+                                        </Grid.ColumnDefinitions>
+                                        <Border Grid.Column="0"
+                                                Background="Transparent"
+                                                PreviewMouseLeftButtonDown="NodeNoteHeader_MouseLeftButtonDown"
+                                                PreviewMouseMove="NodeNoteHeader_MouseMove"
+                                                PreviewMouseLeftButtonUp="NodeNoteHeader_MouseLeftButtonUp">
+                                            <TextBlock x:Name="NodeNoteTitle" Text="{DynamicResource NodeNote}" VerticalAlignment="Center" Foreground="{DynamicResource TextPrimaryBrush}" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                        </Border>
+                                        <Button Grid.Column="1"
+                                                Content="×"
+                                                Style="{StaticResource NodeNoteCloseButtonStyle}"
+                                                Panel.ZIndex="10"
+                                                Click="CloseNodeNote_Click"
+                                                PreviewMouseLeftButtonDown="CloseNodeNote_PreviewMouseLeftButtonDown" />
+                                    </Grid>
+                                    </Border>
+                                    <Grid x:Name="NodeNoteEditorContainer" Grid.Row="1" />
+                                </Grid>
+                                <Thumb Grid.Row="0" Grid.Column="1" Cursor="SizeNS" Tag="Top" Style="{StaticResource NodeNoteResizeThumbStyle}" DragDelta="NodeNoteResizeThumb_DragDelta" />
+                                <Thumb Grid.Row="2" Grid.Column="1" Cursor="SizeNS" Tag="Bottom" Style="{StaticResource NodeNoteResizeThumbStyle}" DragDelta="NodeNoteResizeThumb_DragDelta" />
+                                <Thumb Grid.Row="1" Grid.Column="0" Cursor="SizeWE" Tag="Left" Style="{StaticResource NodeNoteResizeThumbStyle}" DragDelta="NodeNoteResizeThumb_DragDelta" />
+                                <Thumb Grid.Row="1" Grid.Column="2" Cursor="SizeWE" Tag="Right" Style="{StaticResource NodeNoteResizeThumbStyle}" DragDelta="NodeNoteResizeThumb_DragDelta" />
+                                <Thumb Grid.Row="0" Grid.Column="0" Cursor="SizeNWSE" Tag="Left, Top" Style="{StaticResource NodeNoteResizeThumbStyle}" DragDelta="NodeNoteResizeThumb_DragDelta" />
+                                <Thumb Grid.Row="0" Grid.Column="2" Cursor="SizeNESW" Tag="Right, Top" Style="{StaticResource NodeNoteResizeThumbStyle}" DragDelta="NodeNoteResizeThumb_DragDelta" />
+                                <Thumb Grid.Row="2" Grid.Column="0" Cursor="SizeNESW" Tag="Left, Bottom" Style="{StaticResource NodeNoteResizeThumbStyle}" DragDelta="NodeNoteResizeThumb_DragDelta" />
+                                <Thumb Grid.Row="2" Grid.Column="2" Cursor="SizeNWSE" Tag="Right, Bottom" Style="{StaticResource NodeNoteResizeThumbStyle}" DragDelta="NodeNoteResizeThumb_DragDelta" />
+                            </Grid>
+                        </Border>
                     </Grid>
-                </Border>
+                        </Grid>
+                    </Border>
+                    <GridSplitter x:Name="WorkspaceSplitter"
+                                  Grid.Column="1"
+                                  Width="6"
+                                  HorizontalAlignment="Stretch"
+                                  Background="{DynamicResource PanelBorderBrush}"
+                                  ResizeDirection="Columns"
+                                  ResizeBehavior="PreviousAndNext"
+                                  ShowsPreview="True"
+                                  DragCompleted="WorkspaceSplitter_DragCompleted" />
+                    <Border x:Name="MarkdownPaneBorder"
+                            Grid.Column="2"
+                            Background="{DynamicResource ControlBackgroundBrush}"
+                            BorderBrush="{DynamicResource ControlBorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="4"
+                            ClipToBounds="True">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="26" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <Border Grid.Row="0" Background="{DynamicResource ToolbarBackgroundBrush}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="0,0,0,1" Padding="4,0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="22" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="22" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button x:Name="ToggleMarkdownOutlineButton"
+                                            Grid.Column="0"
+                                            Content="&#xE8A1;"
+                                            FontFamily="Segoe MDL2 Assets"
+                                            Style="{StaticResource TabCloseButtonStyle}"
+                                            ToolTip="{DynamicResource ShowMarkdownOutline}"
+                                            AutomationProperties.Name="{DynamicResource ShowMarkdownOutline}"
+                                            Click="ToggleMarkdownOutline_Click" />
+                                    <Border Grid.Column="1"
+                                            Background="Transparent"
+                                            Cursor="SizeAll"
+                                            Tag="Markdown"
+                                            ToolTip="{DynamicResource DragPaneToReorder}"
+                                            AllowDrop="True"
+                                            PreviewMouseLeftButtonDown="WorkspacePaneHeader_PreviewMouseLeftButtonDown"
+                                            PreviewMouseLeftButtonUp="WorkspacePaneHeader_PreviewMouseLeftButtonUp"
+                                            MouseMove="WorkspacePaneHeader_MouseMove"
+                                            DragOver="WorkspacePane_DragOver"
+                                            Drop="WorkspacePane_Drop">
+                                        <TextBlock Text="{DynamicResource MarkdownDocumentTitle}"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource TextPrimaryBrush}"
+                                                   FontWeight="SemiBold" />
+                                    </Border>
+                                    <Button x:Name="CloseMarkdownPaneButton"
+                                            Grid.Column="2"
+                                            Content="×"
+                                            Style="{StaticResource TabCloseButtonStyle}"
+                                            Click="CloseMarkdownPane_Click"
+                                            ToolTip="{DynamicResource CloseMarkdownPane}" />
+                                </Grid>
+                            </Border>
+                            <Grid x:Name="MarkdownEditorContainer" Grid.Row="1" />
+                        </Grid>
+                    </Border>
+                </Grid>
             </Grid>
 
             <Border x:Name="RightSidebar" Grid.Column="1" Margin="0,12,12,12" Background="{DynamicResource PanelBackgroundBrush}" BorderBrush="{DynamicResource PanelBorderBrush}"
